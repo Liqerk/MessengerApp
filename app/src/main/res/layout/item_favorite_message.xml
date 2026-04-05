@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="6dp"
+    android:background="?attr/selectableItemBackground">
+
+    <!-- Шапка: От кого → Кому, время -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <!-- Аватарка отправителя -->
+        <TextView
+            android:id="@+id/fav_avatar"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:textSize="16sp"
+            android:textColor="@color/text_on_primary"
+            android:textStyle="bold"
+            android:background="@drawable/avatar_background"/>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="10dp">
+
+            <TextView
+                android:id="@+id/fav_sender"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/primary"/>
+
+            <!-- Контекст: чат с кем -->
+            <TextView
+                android:id="@+id/fav_chat_context"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary"/>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/fav_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary"/>
+    </LinearLayout>
+
+    <!-- Содержимое сообщения -->
+    <TextView
+        android:id="@+id/fav_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="15sp"
+        android:textColor="@color/text_primary"
+        android:layout_marginTop="6dp"
+        android:layout_marginStart="46dp"
+        android:maxLines="4"
+        android:ellipsize="end"/>
+
+    <!-- Фото (если есть) -->
+    <ImageView
+        android:id="@+id/fav_image"
+        android:layout_width="180dp"
+        android:layout_height="120dp"
+        android:scaleType="centerCrop"
+        android:layout_marginTop="6dp"
+        android:layout_marginStart="46dp"
+        android:visibility="gone"
+        android:contentDescription="Фото"/>
+
+    <!-- Аудио (если есть) -->
+    <TextView
+        android:id="@+id/fav_audio_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🎤 Голосовое сообщение"
+        android:textSize="14sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginTop="6dp"
+        android:layout_marginStart="46dp"
+        android:visibility="gone"/>
+
+    <!-- Разделитель -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="@color/divider"
+        android:layout_marginTop="8dp"/>
+</LinearLayout>

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="32dp"
+    android:background="@color/bg_main">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Вход"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="32dp"/>
+
+    <EditText
+        android:id="@+id/login_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Логин"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_hint"
+        android:background="@drawable/input_background"
+        android:padding="14dp"
+        android:layout_marginBottom="16dp"/>
+
+    <EditText
+        android:id="@+id/password_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Пароль"
+        android:inputType="textPassword"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_hint"
+        android:background="@drawable/input_background"
+        android:padding="14dp"
+        android:layout_marginBottom="24dp"/>
+
+    <Button
+        android:id="@+id/button_login"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Войти"
+        android:backgroundTint="@color/primary"
+        android:textColor="@color/text_on_primary"
+        android:layout_marginBottom="16dp"/>
+
+    <TextView
+        android:id="@+id/linkToReg"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Нет аккаунта? Регистрация"
+        android:textColor="@color/primary"/>
+</LinearLayout>

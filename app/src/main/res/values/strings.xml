@@ -1,0 +1,22 @@
+<resources>
+    <string name="title_activity_login">LoginActivity</string>
+    <string name="prompt_email">Email</string>
+    <string name="prompt_password">Password</string>
+    <string name="action_sign_in">Sign in or register</string>
+    <string name="action_sign_in_short">Sign in</string>
+    <string name="welcome">"Welcome !"</string>
+    <string name="invalid_username">Not a valid username</string>
+    <string name="invalid_password">Password must be >5 characters</string>
+    <string name="login_failed">"Login failed"</string>
+    <string name="chats_title">Чаты (%1$s)</string>
+    <string name="app_name">Messenger</string>
+    <string name="no_users_found">Пользователи не найдены</string>
+    <string name="search_hint">Введите логин для поиска</string>
+    <string name="no_messages">Нет сообщений</string>
+    <string name="vpn_channel_name">DPI VPN Service</string>
+    <string name="vpn_notification_content">VPN активен, трафик обходит блокировки</string>
+    <string name="proxy_channel_name">DPI Proxy Service</string>
+    <string name="proxy_notification_content">Прокси активен на порту 1080</string>
+    <string name="notification_title">DPI Обход блокировок</string>
+    <string name="failed_to_start">Ошибка запуска</string>
+</resources>

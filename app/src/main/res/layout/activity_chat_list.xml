@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_main">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/app_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_main"
+        app:elevation="0dp">
+
+        <!-- Заголовок — всегда виден -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp"
+            app:layout_scrollFlags="noScroll">
+
+            <!-- Аватарка (открывает профиль) -->
+            <FrameLayout
+                android:id="@+id/my_avatar_container"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="12dp">
+
+                <ImageView
+                    android:id="@+id/my_avatar_image"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:scaleType="centerCrop"
+                    android:visibility="gone"
+                    android:contentDescription="Аватар"
+                    android:background="@drawable/avatar_background"/>
+
+                <TextView
+                    android:id="@+id/my_avatar"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:gravity="center"
+                    android:textSize="18sp"
+                    android:textColor="@color/text_on_primary"
+                    android:textStyle="bold"
+                    android:background="@drawable/avatar_background"
+                    android:visibility="visible"/>
+
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/title_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Чаты"
+                android:textSize="26sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"/>
+
+            <!-- Индикатор режима -->
+            <TextView
+                android:id="@+id/connection_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📱 Локально"
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary"
+                android:padding="4dp"/>
+
+            <!-- Тема -->
+            <ImageButton
+                android:id="@+id/theme_button"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_theme"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Тема"
+                android:layout_marginEnd="4dp"/>
+
+            <!-- Выход -->
+            <ImageButton
+                android:id="@+id/logout_button"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_logout"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Выйти"/>
+
+        </LinearLayout>
+
+        <!-- Поиск -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="12dp"
+            app:layout_scrollFlags="scroll|snap">
+
+            <EditText
+                android:id="@+id/search_input"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:hint="🔍  @user или текст сообщения"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_hint"
+                android:textSize="15sp"
+                android:background="@drawable/search_background"
+                android:paddingHorizontal="16dp"
+                android:singleLine="true"
+                android:inputType="text"/>
+
+        </LinearLayout>
+
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/chat_recycler_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:overScrollMode="always"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior"/>
+
+    <TextView
+        android:id="@+id/empty_text"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:text="Нет чатов\nПотяните вниз и найдите людей через поиск ↓"
+        android:textSize="16sp"
+        android:textColor="@color/text_hint"
+        android:visibility="gone"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior"/>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

@@ -1,0 +1,33 @@
+<resources>
+    <style name="Theme.MyApplication" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <item name="colorPrimary">@color/primary</item>
+
+    <!-- системные панели -->
+    <item name="android:statusBarColor">@color/bg_toolbar</item>
+    <item name="android:navigationBarColor">@color/bg_main</item>
+
+    <!-- тёмная тема = светлые иконки -->
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowLightNavigationBar">false</item>
+
+    <item name="android:enforceStatusBarContrast">false</item>
+    <item name="android:enforceNavigationBarContrast">false</item>
+</style>
+
+    <style name="Theme.Fullscreen" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+
+        <!-- Цвет иконок: true - темные (для светлого фона), false - светлые (для темного) -->
+
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+
+        <!-- Важно: разрешаем контенту заходить под системные панели -->
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+
+        <!-- Цвет иконок (true для темных, false для светлых) -->
+        <item name="android:windowLightNavigationBar">false</item>
+
+    </style>
+
+</resources>

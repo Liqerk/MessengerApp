@@ -1,0 +1,51 @@
+# ==================== #
+# Android / Gradle     #
+# ==================== #
+*.iml
+.idea/
+.gradle/
+.kt/
+.cxx/
+.externalNativeBuild/
+local.properties
+.DS_Store
+captures/
+build/
+app/build/
+app/release/
+
+# ==================== #
+# Gradle wrapper       #
+# (оставляем только gradle-wrapper.jar)
+# ==================== #
+!gradle/wrapper/gradle-wrapper.jar
+
+# ==================== #
+# OS generated files   #
+# ==================== #
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# ==================== #
+# Secrets & Keys       #
+# ==================== #
+keystore.jks
+google-services.json
+secrets.properties
+
+# ==================== #
+# Logs                 #
+# ==================== #
+*.log
+logs/
+
+# ==================== #
+# Native build         #
+# ==================== #
+*.o
+*.so
+*.a
+obj/
+libs/

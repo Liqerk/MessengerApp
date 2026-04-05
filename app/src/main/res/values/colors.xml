@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#2196F3</color>
+    <color name="bg_main">#FFFFFF</color>
+    <color name="bg_chat">#E7EBF0</color>
+    <color name="bg_input">#F2F2F7</color>
+    <color name="bg_toolbar">#FFFFFF</color>
+    <color name="bg_bubble_sent">#DCF8C6</color>
+    <color name="bg_bubble_received">#FFFFFF</color>
+    <color name="bg_recording">#FFFFFF</color>
+    <color name="bg_dialog">#FFFFFF</color>
+    <color name="text_primary">#1A1A1A</color>
+    <color name="text_secondary">#8E8E93</color>
+    <color name="text_hint">#BCBCBC</color>
+    <color name="text_on_primary">#FFFFFF</color>
+    <color name="text_bubble_sent">#1A1A1A</color>
+    <color name="text_bubble_received">#1A1A1A</color>
+    <color name="text_time_sent">#6D9B5A</color>
+    <color name="text_time_received">#999999</color>
+    <color name="divider">#F0F0F0</color>
+    <color name="input_stroke">#E5E5EA</color>
+    <color name="icon_tint">#8E8E93</color>
+    <color name="recording_red">#FF4444</color>
+    <color name="read_check">#4FC3F7</color>
+    <color name="unread_badge">#4CAF50</color>
+    <color name="overlay_dark">#66000000</color>
+</resources>

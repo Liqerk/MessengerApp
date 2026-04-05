@@ -1,0 +1,414 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg_chat">
+
+    <!-- ====== ПАНЕЛЬ МУЛЬТИВЫБОРА (красивая как в ТГ) ====== -->
+    <LinearLayout
+        android:id="@+id/selection_panel"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="4dp"
+        android:background="@color/bg_toolbar"
+        android:elevation="4dp"
+        android:visibility="gone">
+
+        <!-- Закрыть -->
+        <ImageButton
+            android:id="@+id/selection_close_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_close_white"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Закрыть"
+            android:padding="10dp"/>
+
+        <!-- Счётчик выбранных -->
+        <TextView
+            android:id="@+id/selection_count"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="0"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/primary"
+            android:layout_marginStart="4dp"/>
+
+        <!-- Ответить (только если 1 выбрано) -->
+        <ImageButton
+            android:id="@+id/selection_reply_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_reply"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Ответить"
+            android:padding="10dp"
+            android:visibility="gone"/>
+
+        <!-- Редактировать (только если 1 своё текстовое) -->
+        <ImageButton
+            android:id="@+id/selection_edit_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_edit"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Редактировать"
+            android:padding="10dp"
+            android:visibility="gone"/>
+
+        <!-- Переслать -->
+        <ImageButton
+            android:id="@+id/selection_forward_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_forward"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Переслать"
+            android:padding="10dp"/>
+
+        <!-- В избранное -->
+        <ImageButton
+            android:id="@+id/selection_fav_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_star"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="В избранное"
+            android:padding="10dp"/>
+
+        <!-- Удалить -->
+        <ImageButton
+            android:id="@+id/selection_delete_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_delete"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Удалить"
+            android:padding="10dp"/>
+    </LinearLayout>
+
+    <!-- ====== ОБЫЧНАЯ ШАПКА ====== -->
+    <LinearLayout
+        android:id="@+id/normal_toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:background="@color/bg_toolbar"
+        android:elevation="2dp">
+
+        <ImageButton
+            android:id="@+id/back_button"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@android:drawable/ic_menu_revert"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Назад"/>
+
+        <FrameLayout
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="4dp">
+
+            <TextView
+                android:id="@+id/chat_avatar"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
+                android:textSize="18sp"
+                android:textColor="@color/text_on_primary"
+                android:textStyle="bold"
+                android:background="@drawable/avatar_background"/>
+
+            <ImageView
+                android:id="@+id/chat_avatar_image"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:scaleType="centerCrop"
+                android:visibility="gone"
+                android:contentDescription="Аватарка"/>
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="12dp">
+
+            <TextView
+                android:id="@+id/chat_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"/>
+
+            <TextView
+                android:id="@+id/chat_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary"
+                android:text="в сети"/>
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/search_messages_btn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_search"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Поиск"/>
+    </LinearLayout>
+
+    <!-- ПАНЕЛЬ ПОИСКА -->
+    <LinearLayout
+        android:id="@+id/search_panel"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:background="@color/bg_toolbar"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/search_messages_input"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:hint="Поиск..."
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_hint"
+            android:textSize="14sp"
+            android:background="@drawable/search_background"
+            android:paddingHorizontal="12dp"
+            android:singleLine="true"/>
+
+        <TextView
+            android:id="@+id/search_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginHorizontal="4dp"/>
+
+        <ImageButton
+            android:id="@+id/search_up_btn"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_arrow_up"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Предыдущий"/>
+
+        <ImageButton
+            android:id="@+id/search_down_btn"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_arrow_down"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Следующий"/>
+
+        <ImageButton
+            android:id="@+id/close_search_btn"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_close_white"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Закрыть"/>
+    </LinearLayout>
+
+    <!-- Сообщения -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/messages_recycler"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="8dp"
+            android:overScrollMode="never"/>
+
+        <ImageButton
+            android:id="@+id/scroll_down_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="12dp"
+            android:src="@drawable/ic_arrow_down"
+            android:background="@drawable/scroll_down_background"
+            android:contentDescription="Вниз"
+            android:scaleType="center"
+            android:padding="10dp"
+            android:elevation="4dp"
+            android:visibility="gone"/>
+    </FrameLayout>
+
+    <!-- ПАНЕЛЬ ЗАПИСИ (свайп вверх = отмена) -->
+    <LinearLayout
+        android:id="@+id/recording_panel"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:background="@color/bg_recording"
+        android:elevation="4dp"
+        android:visibility="gone">
+
+        <View
+            android:id="@+id/recording_dot"
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:background="@drawable/recording_dot"/>
+
+        <TextView
+            android:id="@+id/recording_timer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0:00"
+            android:textSize="18sp"
+            android:textColor="@color/recording_red"
+            android:textStyle="bold"
+            android:layout_marginStart="12dp"/>
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"/>
+
+        <!-- Подсказка свайп -->
+        <TextView
+            android:id="@+id/recording_hint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="↑ свайп — отмена"
+            android:textSize="13sp"
+            android:textColor="@color/text_secondary"/>
+    </LinearLayout>
+
+    <!-- Панель ответа -->
+    <LinearLayout
+        android:id="@+id/reply_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp"
+        android:background="@color/bg_toolbar"
+        android:visibility="gone">
+
+        <View
+            android:layout_width="3dp"
+            android:layout_height="match_parent"
+            android:background="@color/primary"/>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="8dp">
+
+            <TextView
+                android:id="@+id/reply_sender_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/primary"
+                android:textSize="13sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/reply_preview_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/reply_close_btn"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_close_white"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Закрыть"/>
+    </LinearLayout>
+
+    <!-- Панель ввода -->
+    <LinearLayout
+        android:id="@+id/input_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical|bottom"
+        android:paddingHorizontal="6dp"
+        android:paddingVertical="6dp"
+        android:background="@color/bg_toolbar"
+        android:elevation="4dp">
+
+        <ImageButton
+            android:id="@+id/attach_button"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_attach"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Прикрепить"
+            android:padding="8dp"/>
+
+        <EditText
+            android:id="@+id/message_input"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minHeight="44dp"
+            android:hint="Введите сообщение"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_hint"
+            android:textSize="16sp"
+            android:background="@drawable/input_background"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="10dp"
+            android:maxLines="5"
+            android:inputType="textMultiLine|textCapSentences"
+            android:layout_marginHorizontal="6dp"/>
+
+        <ImageButton
+            android:id="@+id/voice_button"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_mic"
+            android:background="@drawable/send_button_background"
+            android:contentDescription="Голосовое"
+            android:scaleType="center"
+            android:padding="10dp"
+            android:visibility="visible"/>
+
+        <ImageButton
+            android:id="@+id/send_button"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/ic_send"
+            android:background="@drawable/send_button_background"
+            android:contentDescription="Отправить"
+            android:scaleType="center"
+            android:padding="10dp"
+            android:visibility="gone"/>
+    </LinearLayout>
+
+</LinearLayout>

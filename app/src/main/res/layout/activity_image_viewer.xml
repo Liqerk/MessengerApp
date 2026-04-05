@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Фото на весь экран -->
+    <ImageView
+        android:id="@+id/fullscreen_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:contentDescription="Фото"/>
+
+    <!-- Кнопка закрыть (крестик) -->
+    <ImageButton
+        android:id="@+id/close_button"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|start"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_close_white"
+        android:background="@drawable/button_dark_circle"
+        android:contentDescription="Закрыть"
+        android:padding="12dp"/>
+
+    <!-- Кнопка сохранить -->
+    <ImageButton
+        android:id="@+id/save_button"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_download"
+        android:background="@drawable/button_dark_circle"
+        android:contentDescription="Сохранить"
+        android:padding="12dp"/>
+
+</FrameLayout>
