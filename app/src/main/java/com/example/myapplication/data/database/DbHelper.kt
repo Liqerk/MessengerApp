@@ -9,45 +9,48 @@ import android.database.sqlite.SQLiteOpenHelper
 class DbHelper(
     context: Context,
     factory: SQLiteDatabase.CursorFactory?
-) : SQLiteOpenHelper(context, "messenger_app", factory, 8) {
+) : SQLiteOpenHelper(context, "messenger_app", factory, 10) {
 
     override fun onCreate(db: SQLiteDatabase?) {
         db!!.execSQL(
             """CREATE TABLE users(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                login TEXT UNIQUE,
-                mail TEXT,
-                password TEXT,
-                is_online INTEGER DEFAULT 0,
-                last_seen TEXT DEFAULT '',
-                avatar_path TEXT DEFAULT NULL
-            )"""
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            login TEXT UNIQUE,
+            mail TEXT,
+            password TEXT,
+            is_online INTEGER DEFAULT 0,
+            last_seen TEXT DEFAULT '',
+            avatar_path TEXT DEFAULT NULL
+        )"""
         )
 
+        // ✅ ДОБАВЛЕНО UNIQUE(sender, receiver, text, timestamp) ON CONFLICT IGNORE
         db.execSQL(
             """CREATE TABLE messages(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sender TEXT,
-                receiver TEXT,
-                text TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                is_read INTEGER DEFAULT 0,
-                type TEXT DEFAULT 'text',
-                media_url TEXT DEFAULT NULL,
-                duration INTEGER DEFAULT 0,
-                reply_to_id INTEGER DEFAULT 0,
-                reply_to_text TEXT DEFAULT NULL,
-                is_favorite INTEGER DEFAULT 0
-            )"""
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender TEXT,
+            receiver TEXT,
+            text TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_read INTEGER DEFAULT 0,
+            type TEXT DEFAULT 'text',
+            media_url TEXT DEFAULT NULL,
+            duration INTEGER DEFAULT 0,
+            reply_to_id INTEGER DEFAULT 0,
+            reply_to_text TEXT DEFAULT NULL,
+            is_favorite INTEGER DEFAULT 0,
+            is_sent INTEGER DEFAULT 1,
+            UNIQUE(sender, receiver, text, timestamp) ON CONFLICT IGNORE
+        )"""
         )
 
         db.execSQL(
             """CREATE TABLE pinned_chats(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_login TEXT,
-                chat_with TEXT,
-                UNIQUE(user_login, chat_with)
-            )"""
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_login TEXT,
+            chat_with TEXT,
+            UNIQUE(user_login, chat_with)
+        )"""
         )
     }
 
@@ -59,56 +62,94 @@ class DbHelper(
     }
 
     // ==================== ПОЛЬЗОВАТЕЛИ ====================
+    // ✅ НОВЫЙ МЕТОД: сохранение с серверным timestamp
+    fun addMessageWithTimestamp(sender: String, receiver: String, text: String, timestamp: String, isSent: Boolean = true): Int {
+        return writableDatabase.insert("messages", null, ContentValues().apply {
+            put("sender", sender)
+            put("receiver", receiver)
+            put("text", text)
+            put("timestamp", normalizeTimestamp(timestamp))
+            put("type", "text")
+            put("is_sent", if (isSent) 1 else 0)
+        }).toInt()
+    }
 
+    // ✅ Нормализация timestamp: "2026-04-09T23:18:35.123456Z" → "2026-04-09 23:18:35"
+    private fun normalizeTimestamp(ts: String): String {
+        return try {
+            ts.replace("T", " ")
+                .replace(Regex("\\..*Z?$"), "")
+                .trim()
+        } catch (e: Exception) {
+            ts
+        }
+    }
+    fun messageExists(sender: String, receiver: String, text: String, timestamp: String): Boolean {
+        val normalized = try {
+            timestamp.replace("T", " ").replace(Regex("\\..*Z?$"), "").trim()
+        } catch (e: Exception) {
+            timestamp
+        }
+
+        val cursor = readableDatabase.rawQuery(
+            """SELECT id FROM messages 
+           WHERE sender = ? AND receiver = ? AND text = ? AND timestamp = ?""",
+            arrayOf(sender, receiver, text, normalized)
+        )
+        val exists = cursor.moveToFirst()
+        cursor.close()
+        return exists
+    }
     fun addUser(user: User) {
-        val values = ContentValues()
-        values.put("login", user.login)
-        values.put("mail", user.mail)
-        // Сохраняем ХЕШ, а не чистый пароль
-        values.put("password", HashUtils.sha256(user.password))
-        val db = this.writableDatabase
-        db.insertOrThrow("users", null, values)
-        db.close()
+        val values = ContentValues().apply {
+            put("login", user.login)
+            put("mail", user.mail)
+            put("password", HashUtils.sha256(user.password))
+        }
+        writableDatabase.insertOrThrow("users", null, values)
+        // ✅ НЕ ЗАКРЫВАЕМ БД!
     }
 
     fun getUser(login: String, password: String): Boolean {
-        val db = this.readableDatabase
-        // Проверяем по ХЕШУ
         val hashedPassword = HashUtils.sha256(password)
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             "SELECT * FROM users WHERE login = ? AND password = ?",
             arrayOf(login, hashedPassword)
         )
-        val exists = result.moveToFirst()
-        result.close()
+        val exists = cursor.moveToFirst()
+        cursor.close()  // ✅ Закрываем только курсор
         return exists
     }
 
     fun getAllUsersExcept(currentLogin: String): List<User> {
         val users = mutableListOf<User>()
-        val db = this.readableDatabase
-        val result = db.rawQuery("SELECT * FROM users WHERE login != ?", arrayOf(currentLogin))
-        while (result.moveToNext()) { users.add(cursorToUser(result)) }
-        result.close()
+        val cursor = readableDatabase.rawQuery(
+            "SELECT * FROM users WHERE login != ?",
+            arrayOf(currentLogin)
+        )
+        while (cursor.moveToNext()) {
+            users.add(cursorToUser(cursor))
+        }
+        cursor.close()
         return users
     }
 
     fun searchUsers(query: String, exceptLogin: String): List<User> {
         val users = mutableListOf<User>()
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             "SELECT * FROM users WHERE login LIKE ? AND login != ?",
             arrayOf("%$query%", exceptLogin)
         )
-        while (result.moveToNext()) { users.add(cursorToUser(result)) }
-        result.close()
+        while (cursor.moveToNext()) {
+            users.add(cursorToUser(cursor))
+        }
+        cursor.close()
         return users
     }
 
     fun getUsersWithMessages(currentUser: String): List<User> {
         val users = mutableListOf<User>()
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             """SELECT DISTINCT u.* FROM users u
                INNER JOIN messages m 
                ON (m.sender = u.login AND m.receiver = ?)
@@ -116,72 +157,83 @@ class DbHelper(
                WHERE u.login != ?""",
             arrayOf(currentUser, currentUser, currentUser)
         )
-        while (result.moveToNext()) { users.add(cursorToUser(result)) }
-        result.close()
+        while (cursor.moveToNext()) {
+            users.add(cursorToUser(cursor))
+        }
+        cursor.close()
         return users
     }
 
     fun getUserMail(login: String): String {
-        val db = this.readableDatabase
-        val result = db.rawQuery("SELECT mail FROM users WHERE login = ?", arrayOf(login))
-        val mail = if (result.moveToFirst()) result.getString(0) else ""
-        result.close()
+        val cursor = readableDatabase.rawQuery(
+            "SELECT mail FROM users WHERE login = ?",
+            arrayOf(login)
+        )
+        val mail = if (cursor.moveToFirst()) cursor.getString(0) else ""
+        cursor.close()
         return mail
     }
 
     fun changeLogin(oldLogin: String, newLogin: String): Boolean {
         return try {
-            val db = this.writableDatabase
-            val v1 = ContentValues(); v1.put("login", newLogin)
-            db.update("users", v1, "login = ?", arrayOf(oldLogin))
-            val v2 = ContentValues(); v2.put("sender", newLogin)
-            db.update("messages", v2, "sender = ?", arrayOf(oldLogin))
-            val v3 = ContentValues(); v3.put("receiver", newLogin)
-            db.update("messages", v3, "receiver = ?", arrayOf(oldLogin))
-            db.close()
+            writableDatabase.apply {
+                update("users", ContentValues().apply { put("login", newLogin) },
+                    "login = ?", arrayOf(oldLogin))
+                update("messages", ContentValues().apply { put("sender", newLogin) },
+                    "sender = ?", arrayOf(oldLogin))
+                update("messages", ContentValues().apply { put("receiver", newLogin) },
+                    "receiver = ?", arrayOf(oldLogin))
+            }
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            false
+        }
     }
 
     fun changePassword(login: String, newPassword: String) {
-        val db = this.writableDatabase
-        val values = ContentValues(); values.put("password", newPassword)
-        db.update("users", values, "login = ?", arrayOf(login))
-        db.close()
+        writableDatabase.update(
+            "users",
+            ContentValues().apply { put("password", HashUtils.sha256(newPassword)) },
+            "login = ?",
+            arrayOf(login)
+        )
     }
 
-    // ==================== АВАТАРКИ ====================
-
     fun setAvatar(login: String, path: String) {
-        val db = this.writableDatabase
-        val values = ContentValues(); values.put("avatar_path", path)
-        db.update("users", values, "login = ?", arrayOf(login))
-        db.close()
+        writableDatabase.update(
+            "users",
+            ContentValues().apply { put("avatar_path", path) },
+            "login = ?",
+            arrayOf(login)
+        )
     }
 
     fun getAvatar(login: String): String? {
-        val db = this.readableDatabase
-        val result = db.rawQuery("SELECT avatar_path FROM users WHERE login = ?", arrayOf(login))
-        val path = if (result.moveToFirst()) result.getString(0) else null
-        result.close()
+        val cursor = readableDatabase.rawQuery(
+            "SELECT avatar_path FROM users WHERE login = ?",
+            arrayOf(login)
+        )
+        val path = if (cursor.moveToFirst()) cursor.getString(0) else null
+        cursor.close()
         return path
     }
+
     fun addUserIfNotExists(login: String) {
-        val db = this.writableDatabase
-        val cursor = db.rawQuery("SELECT id FROM users WHERE login = ?", arrayOf(login))
+        val cursor = readableDatabase.rawQuery(
+            "SELECT id FROM users WHERE login = ?",
+            arrayOf(login)
+        )
         val exists = cursor.moveToFirst()
         cursor.close()
 
         if (!exists) {
-            val values = ContentValues()
-            values.put("login", login)
-            values.put("mail", "")
-            values.put("password", "")
             try {
-                db.insert("users", null, values)
-            } catch (e: Exception) {
-                // Уже существует
-            }
+                writableDatabase.insert("users", null, ContentValues().apply {
+                    put("login", login)
+                    put("mail", "")
+                    put("password", "")
+                })
+            } catch (_: Exception) {}
         }
     }
 
@@ -197,196 +249,258 @@ class DbHelper(
 
     // ==================== СООБЩЕНИЯ ====================
 
-    fun addMessage(sender: String, receiver: String, text: String) {
-        val values = ContentValues()
-        values.put("sender", sender); values.put("receiver", receiver)
-        values.put("text", text); values.put("type", "text")
-        val db = this.writableDatabase; db.insert("messages", null, values); db.close()
+    fun addMessage(sender: String, receiver: String, text: String, isSent: Boolean = true): Int {
+        return writableDatabase.insert("messages", null, ContentValues().apply {
+            put("sender", sender)
+            put("receiver", receiver)
+            put("text", text)
+            put("type", "text")
+            put("is_sent", if (isSent) 1 else 0)
+        }).toInt()
     }
 
-    fun addImageMessage(sender: String, receiver: String, imagePath: String) {
-        val values = ContentValues()
-        values.put("sender", sender); values.put("receiver", receiver)
-        values.put("text", "📷 Фото"); values.put("type", "image")
-        values.put("media_url", imagePath)
-        val db = this.writableDatabase; db.insert("messages", null, values); db.close()
+    fun addImageMessage(sender: String, receiver: String, imagePath: String, isSent: Boolean = true): Int {
+        return writableDatabase.insert("messages", null, ContentValues().apply {
+            put("sender", sender)
+            put("receiver", receiver)
+            put("text", "📷 Фото")
+            put("type", "image")
+            put("media_url", imagePath)
+            put("is_sent", if (isSent) 1 else 0)
+        }).toInt()
     }
 
-    fun addAudioMessage(sender: String, receiver: String, audioPath: String, duration: Int) {
-        val values = ContentValues()
-        values.put("sender", sender); values.put("receiver", receiver)
-        values.put("text", "🎤 Голосовое"); values.put("type", "audio")
-        values.put("media_url", audioPath); values.put("duration", duration)
-        val db = this.writableDatabase; db.insert("messages", null, values); db.close()
+    fun addAudioMessage(sender: String, receiver: String, audioPath: String, duration: Int, isSent: Boolean = true): Int {
+        return writableDatabase.insert("messages", null, ContentValues().apply {
+            put("sender", sender)
+            put("receiver", receiver)
+            put("text", "🎤 Голосовое")
+            put("type", "audio")
+            put("media_url", audioPath)
+            put("duration", duration)
+            put("is_sent", if (isSent) 1 else 0)
+        }).toInt()
     }
 
-    fun addReplyMessage(sender: String, receiver: String, text: String, replyToId: Int, replyToText: String) {
-        val values = ContentValues()
-        values.put("sender", sender); values.put("receiver", receiver)
-        values.put("text", text); values.put("type", "text")
-        values.put("reply_to_id", replyToId); values.put("reply_to_text", replyToText)
-        val db = this.writableDatabase; db.insert("messages", null, values); db.close()
+    fun addReplyMessage(
+        sender: String,
+        receiver: String,
+        text: String,
+        replyToId: Int,
+        replyToText: String,
+        isSent: Boolean = true
+    ): Int {
+        return writableDatabase.insert("messages", null, ContentValues().apply {
+            put("sender", sender)
+            put("receiver", receiver)
+            put("text", text)
+            put("type", "text")
+            put("reply_to_id", replyToId)
+            put("reply_to_text", replyToText)
+            put("is_sent", if (isSent) 1 else 0)
+        }).toInt()
     }
 
     fun getMessages(user1: String, user2: String): List<Message> {
         val messages = mutableListOf<Message>()
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             """SELECT * FROM messages 
                WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
                ORDER BY id ASC""",
             arrayOf(user1, user2, user2, user1)
         )
-        while (result.moveToNext()) { messages.add(cursorToMessage(result)) }
-        result.close()
+        while (cursor.moveToNext()) {
+            messages.add(cursorToMessage(cursor))
+        }
+        cursor.close()
         return messages
     }
 
     fun getLastMessage(user1: String, user2: String): String {
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             """SELECT text FROM messages 
                WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
                ORDER BY id DESC LIMIT 1""",
             arrayOf(user1, user2, user2, user1)
         )
-        val msg = if (result.moveToFirst()) result.getString(0) else ""
-        result.close(); return msg
+        val msg = if (cursor.moveToFirst()) cursor.getString(0) else ""
+        cursor.close()
+        return msg
     }
 
     fun getLastMessageTime(user1: String, user2: String): String {
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             """SELECT timestamp FROM messages 
                WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)
                ORDER BY id DESC LIMIT 1""",
             arrayOf(user1, user2, user2, user1)
         )
-        val time = if (result.moveToFirst()) result.getString(0) else ""
-        result.close(); return time
+        val time = if (cursor.moveToFirst()) cursor.getString(0) else ""
+        cursor.close()
+        return time
     }
 
     fun getUnreadCount(currentUser: String, sender: String): Int {
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM messages WHERE sender = ? AND receiver = ? AND is_read = 0",
             arrayOf(sender, currentUser)
         )
-        val count = if (result.moveToFirst()) result.getInt(0) else 0
-        result.close(); return count
+        val count = if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        cursor.close()
+        return count
+    }
+
+    fun markMessageAsSent(messageId: Int) {
+        writableDatabase.update(
+            "messages",
+            ContentValues().apply { put("is_sent", 1) },
+            "id = ?",
+            arrayOf(messageId.toString())
+        )
+    }
+
+    fun getUnsentMessages(currentUser: String): List<Message> {
+        val list = mutableListOf<Message>()
+        val cursor = readableDatabase.rawQuery(
+            """SELECT * FROM messages 
+               WHERE sender = ? AND is_sent = 0 
+               ORDER BY timestamp ASC""",
+            arrayOf(currentUser)
+        )
+        while (cursor.moveToNext()) {
+            list.add(cursorToMessage(cursor))
+        }
+        cursor.close()
+        return list
     }
 
     fun markMessagesAsRead(currentUser: String, sender: String) {
-        val db = this.writableDatabase
-        val values = ContentValues(); values.put("is_read", 1)
-        db.update("messages", values, "sender = ? AND receiver = ? AND is_read = 0",
-            arrayOf(sender, currentUser))
-        db.close()
+        writableDatabase.update(
+            "messages",
+            ContentValues().apply { put("is_read", 1) },
+            "sender = ? AND receiver = ? AND is_read = 0",
+            arrayOf(sender, currentUser)
+        )
     }
 
     fun deleteMessage(messageId: Int) {
-        val db = this.writableDatabase
-        db.delete("messages", "id = ?", arrayOf(messageId.toString()))
-        db.close()
+        writableDatabase.delete("messages", "id = ?", arrayOf(messageId.toString()))
     }
 
     fun editMessage(messageId: Int, newText: String) {
-        val db = this.writableDatabase
-        val values = ContentValues(); values.put("text", newText)
-        db.update("messages", values, "id = ?", arrayOf(messageId.toString()))
-        db.close()
+        writableDatabase.update(
+            "messages",
+            ContentValues().apply { put("text", newText) },
+            "id = ?",
+            arrayOf(messageId.toString())
+        )
     }
-
-    // ==================== ПОИСК ====================
 
     fun searchMessages(currentUser: String, chatWith: String, query: String): List<Message> {
         val messages = mutableListOf<Message>()
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             """SELECT * FROM messages 
                WHERE ((sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?))
                AND text LIKE ? ORDER BY id ASC""",
             arrayOf(currentUser, chatWith, chatWith, currentUser, "%$query%")
         )
-        while (result.moveToNext()) { messages.add(cursorToMessage(result)) }
-        result.close(); return messages
+        while (cursor.moveToNext()) {
+            messages.add(cursorToMessage(cursor))
+        }
+        cursor.close()
+        return messages
     }
 
     fun searchGlobalMessages(currentUser: String, query: String): List<Message> {
         val messages = mutableListOf<Message>()
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             """SELECT * FROM messages 
                WHERE (sender = ? OR receiver = ?) AND text LIKE ?
                ORDER BY id DESC LIMIT 100""",
             arrayOf(currentUser, currentUser, "%$query%")
         )
-        while (result.moveToNext()) { messages.add(cursorToMessage(result)) }
-        result.close(); return messages
+        while (cursor.moveToNext()) {
+            messages.add(cursorToMessage(cursor))
+        }
+        cursor.close()
+        return messages
     }
 
-    // ==================== ИЗБРАННОЕ ====================
-
     fun toggleFavorite(messageId: Int): Boolean {
-        val db = this.writableDatabase
-        val result = db.rawQuery("SELECT is_favorite FROM messages WHERE id = ?",
-            arrayOf(messageId.toString()))
-        val current = if (result.moveToFirst()) result.getInt(0) else 0
-        result.close()
+        val cursor = readableDatabase.rawQuery(
+            "SELECT is_favorite FROM messages WHERE id = ?",
+            arrayOf(messageId.toString())
+        )
+        val current = if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        cursor.close()
+
         val newState = if (current == 1) 0 else 1
-        val values = ContentValues(); values.put("is_favorite", newState)
-        db.update("messages", values, "id = ?", arrayOf(messageId.toString()))
-        db.close()
+        writableDatabase.update(
+            "messages",
+            ContentValues().apply { put("is_favorite", newState) },
+            "id = ?",
+            arrayOf(messageId.toString())
+        )
         return newState == 1
     }
 
     fun getFavoriteMessages(login: String): List<Message> {
         val messages = mutableListOf<Message>()
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             """SELECT * FROM messages 
                WHERE (sender = ? OR receiver = ?) AND is_favorite = 1
                ORDER BY id DESC""",
             arrayOf(login, login)
         )
-        while (result.moveToNext()) { messages.add(cursorToMessage(result)) }
-        result.close(); return messages
+        while (cursor.moveToNext()) {
+            messages.add(cursorToMessage(cursor))
+        }
+        cursor.close()
+        return messages
     }
 
-    // ==================== ЗАКРЕПЛЁННЫЕ ЧАТЫ ====================
-
     fun isPinned(userLogin: String, chatWith: String): Boolean {
-        val db = this.readableDatabase
-        val result = db.rawQuery(
+        val cursor = readableDatabase.rawQuery(
             "SELECT * FROM pinned_chats WHERE user_login = ? AND chat_with = ?",
             arrayOf(userLogin, chatWith)
         )
-        val pinned = result.moveToFirst(); result.close(); return pinned
+        val pinned = cursor.moveToFirst()
+        cursor.close()
+        return pinned
     }
 
     fun togglePin(userLogin: String, chatWith: String) {
-        val db = this.writableDatabase
         if (isPinned(userLogin, chatWith)) {
-            db.delete("pinned_chats", "user_login = ? AND chat_with = ?",
-                arrayOf(userLogin, chatWith))
+            writableDatabase.delete(
+                "pinned_chats",
+                "user_login = ? AND chat_with = ?",
+                arrayOf(userLogin, chatWith)
+            )
         } else {
-            val values = ContentValues()
-            values.put("user_login", userLogin); values.put("chat_with", chatWith)
-            db.insertWithOnConflict("pinned_chats", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+            writableDatabase.insertWithOnConflict(
+                "pinned_chats",
+                null,
+                ContentValues().apply {
+                    put("user_login", userLogin)
+                    put("chat_with", chatWith)
+                },
+                SQLiteDatabase.CONFLICT_IGNORE
+            )
         }
-        db.close()
     }
 
     fun deleteChat(currentUser: String, chatWith: String) {
-        val db = this.writableDatabase
-        db.delete("messages", "(sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)",
-            arrayOf(currentUser, chatWith, chatWith, currentUser))
-        db.delete("pinned_chats", "user_login = ? AND chat_with = ?",
-            arrayOf(currentUser, chatWith))
-        db.close()
+        writableDatabase.delete(
+            "messages",
+            "(sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)",
+            arrayOf(currentUser, chatWith, chatWith, currentUser)
+        )
+        writableDatabase.delete(
+            "pinned_chats",
+            "user_login = ? AND chat_with = ?",
+            arrayOf(currentUser, chatWith)
+        )
     }
-
-    // ==================== CURSOR → MESSAGE ====================
 
     private fun cursorToMessage(cursor: Cursor): Message {
         return Message(
@@ -401,7 +515,22 @@ class DbHelper(
             duration = cursor.getInt(cursor.getColumnIndexOrThrow("duration")),
             replyToId = cursor.getInt(cursor.getColumnIndexOrThrow("reply_to_id")),
             replyToText = cursor.getString(cursor.getColumnIndexOrThrow("reply_to_text")),
-            isFavorite = cursor.getInt(cursor.getColumnIndexOrThrow("is_favorite")) == 1
+            isFavorite = cursor.getInt(cursor.getColumnIndexOrThrow("is_favorite")) == 1,
+            isSent = cursor.getInt(cursor.getColumnIndexOrThrow("is_sent")) == 1
         )
+    }
+
+    fun getMessageById(id: Int): Message? {
+        val cursor = readableDatabase.rawQuery(
+            "SELECT * FROM messages WHERE id = ?",
+            arrayOf(id.toString())
+        )
+        val msg = if (cursor.moveToFirst()) {
+            cursorToMessage(cursor)
+        } else {
+            null
+        }
+        cursor.close()
+        return msg
     }
 }

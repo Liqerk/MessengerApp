@@ -12,5 +12,15 @@ data class Message(
     val duration: Int = 0,
     val replyToId: Int = 0,
     val replyToText: String? = null,
-    val isFavorite: Boolean = false
-)
+    val isFavorite: Boolean = false,
+    val isSent: Boolean = true,
+    val isSynced: Boolean = true
+) {
+    // ✅ Добавьте метод для сравнения сообщений
+    fun isSameAs(other: Message): Boolean {
+        return this.sender == other.sender &&
+                this.receiver == other.receiver &&
+                this.text == other.text &&
+                this.timestamp == other.timestamp
+    }
+}
