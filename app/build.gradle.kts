@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     kotlin("plugin.serialization") version "1.9.21"
+    kotlin("kapt") version "1.9.21"
 }
 
 android {
@@ -49,7 +50,6 @@ android {
         buildConfig = true
     }
 
-    // CMake — ОДИН РАЗ!
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
@@ -103,6 +103,7 @@ dependencies {
 
     // ========== GLIDE ==========
     implementation("com.github.bumptech.glide:glide:4.16.0")
+
     annotationProcessor("com.github.bumptech.glide:compiler:4.16.0")
 
     // ========== UI ==========
@@ -120,6 +121,12 @@ dependencies {
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("androidx.fragment:fragment-ktx:1.6.2")
 
+    // ========== ROOM ==========
+    val room_version = "2.6.1"
+    implementation("androidx.room:room-runtime:$room_version")
+    implementation("androidx.room:room-ktx:$room_version")
+    kapt("androidx.room:room-compiler:$room_version")
+
     // ========== CORE ==========
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
@@ -128,7 +135,11 @@ dependencies {
     implementation(libs.androidx.annotation)
 
     // ========== TESTS ==========
-    testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    testImplementation("io.mockk:mockk:1.13.8")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("com.google.android.apps.common.testing.accessibility.framework:accessibility-test-framework:7.1.0")
 }

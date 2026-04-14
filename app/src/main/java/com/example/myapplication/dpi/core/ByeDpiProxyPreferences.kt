@@ -71,7 +71,7 @@ class ByeDpiProxyUIPreferences(
     val noDomain: Boolean = noDomain ?: false
     val desyncHttp: Boolean = desyncHttp ?: true
     val desyncHttps: Boolean = desyncHttps ?: true
-    val desyncUdp: Boolean = desyncUdp ?: false
+    val desyncUdp: Boolean = desyncUdp ?: true
     val desyncMethod: DesyncMethod = desyncMethod ?: DesyncMethod.Disorder
     val splitPosition: Int = splitPosition ?: 1
     val splitAtHost: Boolean = splitAtHost ?: false
