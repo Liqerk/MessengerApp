@@ -2,6 +2,13 @@ package com.example.myapplication.transport
 
 import android.content.Context
 import android.util.Log
+import com.example.myapplication.MessageQueue
+import com.example.myapplication.Repository
+import com.example.myapplication.SessionManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.File
 
 enum class TransportMode {
     LOCAL,
@@ -20,6 +27,12 @@ object TransportManager {
     private var mode: TransportMode = TransportMode.LOCAL
     private var appContext: Context? = null
 
+    // 🔴 ДОБАВЛЕНО: Свойство для коллбека состояния подключения
+    var onConnectionStateChanged: ((Boolean) -> Unit)? = null
+
+    // Коллбек для уведомлений о событиях сети
+    var onNetworkEvent: ((NetworkEvent) -> Unit)? = null
+
     fun init(context: Context, mode: TransportMode? = null) {
         this.appContext = context.applicationContext
         val actualMode = mode ?: getSavedMode(context)
@@ -30,11 +43,48 @@ object TransportManager {
                 Log.d(TAG, "📱 Using LOCAL transport")
                 LocalTransport()
             }
+
             TransportMode.SERVER -> {
                 val url = getSavedServerUrl(context)
                 Log.d(TAG, "🌐 Using SERVER transport: $url")
-                ServerTransport(url)
+
+                val transport = ServerTransport(url)
+
+                // Загрузка сохраненного токена при старте приложения
+                val session = SessionManager(context)
+                val login = session.getLogin()
+                val token = session.getToken()
+                if (!login.isNullOrEmpty() && !token.isNullOrEmpty()) {
+                    transport.setToken(token, login)
+                    Log.d(TAG, "✅ Loaded saved token for user: $login")
+
+                    // ✅ ВАЖНО: ПОДКЛЮЧАЕМ WEBSOCKET!
+                    transport.connect()
+                    Log.d(TAG, "🚨 WebSocket connect() called from TransportManager.init()")
+                }
+
+                transport.apply {
+                    onConnectionStateChange = { connected ->
+                        TransportManager.onConnectionStateChanged?.invoke(connected)
+
+                        if (connected) {
+                            val pendingCount: Int = MessageQueue.getPendingCount()
+                            if (pendingCount > 0) {
+                                onNetworkEvent?.invoke(NetworkEvent.PendingMessagesAvailable(pendingCount))
+                            }
+
+                            val user = SessionManager(context).getLogin()
+                            if (!user.isNullOrEmpty()) {
+                                MessageQueue.loadPendingFromDb(user)
+                                MessageQueue.processPending()
+                            }
+                        }
+                    }
+                }
+
+                transport  // ← возвращаем transport
             }
+
             TransportMode.BRIAR -> {
                 Log.d(TAG, "🔒 BRIAR not implemented, using LOCAL")
                 LocalTransport()
@@ -55,26 +105,55 @@ object TransportManager {
     fun getMode(): TransportMode = mode
 
     fun switchMode(newMode: TransportMode, serverUrl: String = "http://192.168.0.35:8080") {
-        val ctx = appContext
-        if (ctx == null) {
-            Log.e(TAG, "❌ Context is null, cannot switch mode")
-            return
-        }
-
+        val ctx = appContext ?: return
         if (mode == newMode) return
 
-        Log.d(TAG, "🔄 Switching from $mode to $newMode")
-
         current?.disconnect()
-
         mode = newMode
+
         current = when (newMode) {
-            TransportMode.LOCAL -> LocalTransport()
+            TransportMode.LOCAL -> {
+                LocalTransport()  // ← ДОБАВИТЬ ЭТУ ВЕТКУ!
+            }
+
             TransportMode.SERVER -> {
                 saveServerUrl(ctx, serverUrl)
-                ServerTransport(serverUrl)
+                val transport = ServerTransport(serverUrl)
+
+                val session = SessionManager(ctx)
+                val login = session.getLogin()
+                val token = session.getToken()
+                if (!login.isNullOrEmpty() && !token.isNullOrEmpty()) {
+                    transport.setToken(token, login)
+                    transport.connect()
+                }
+
+                transport.apply {
+                    onConnectionStateChange = { connected ->
+                        TransportManager.onConnectionStateChanged?.invoke(connected)
+
+                        if (connected) {
+                            val pendingCount: Int = MessageQueue.getPendingCount()
+                            if (pendingCount > 0) {
+                                onNetworkEvent?.invoke(
+                                    NetworkEvent.PendingMessagesAvailable(pendingCount)
+                                )
+                            }
+
+                            val user = SessionManager(ctx).getLogin()
+                            if (!user.isNullOrEmpty()) {
+                                MessageQueue.loadPendingFromDb(user)
+                                MessageQueue.processPending()
+                            }
+                        }
+                    }
+                }
+                transport
             }
-            TransportMode.BRIAR -> LocalTransport()
+
+            TransportMode.BRIAR -> {
+                LocalTransport()  // ← ДОБАВИТЬ ЭТУ ВЕТКУ!
+            }
         }
 
         saveMode(ctx, newMode)
@@ -106,6 +185,13 @@ object TransportManager {
 
     private fun getSavedServerUrl(context: Context): String {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_SERVER_URL, "http://192.168.0.35:8080") ?: "http://192.168.0.35:8080"
+            .getString(KEY_SERVER_URL, "http://192.168.0.35:8080")
+            ?: "http://192.168.0.35:8080"
     }
+
+    // Класс для событий сети
+    sealed class NetworkEvent {
+        data class PendingMessagesAvailable(val count: Int) : NetworkEvent()
+    }
+
 }

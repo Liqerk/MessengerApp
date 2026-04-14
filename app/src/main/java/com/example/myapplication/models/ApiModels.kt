@@ -10,7 +10,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class RegisterRequest(
     val login: String,
-    val mail: String,
+    val email: String,
     val password: String
 )
 
@@ -18,6 +18,14 @@ data class RegisterRequest(
 data class LoginRequest(
     val login: String,
     val password: String
+)
+
+@Serializable
+data class ApiResponse<T>(
+    val success: Boolean = false,
+    val data: T? = null,
+    val error: String? = null,
+    val message: String? = null
 )
 
 @Serializable
@@ -34,7 +42,8 @@ data class SendMessageRequest(
 
 @Serializable
 data class AuthResponse(
-    val token: String,
+    val accessToken: String,
+    val refreshToken: String = "",
     val user: UserDto
 )
 
@@ -42,10 +51,14 @@ data class AuthResponse(
 data class UserDto(
     val id: Int = 0,
     val login: String,
-    val mail: String,
+    val email: String? = null,
+    val mail: String? = null,
     val isOnline: Boolean = false,
     val avatarUrl: String? = null
-)
+) {
+    fun getUserEmail(): String = email ?: mail ?: ""
+
+}
 
 @Serializable
 data class MessageDto(
@@ -58,9 +71,10 @@ data class MessageDto(
     val type: String = "text",
     val mediaUrl: String? = null,
     val duration: Int = 0,
-    val replyToId: Int = 0,
+    val replyToId: Int? = null,
     val replyToText: String? = null,
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    val isDeleted: Boolean = false
 )
 
 @Serializable
@@ -82,15 +96,28 @@ fun MessageDto.toDomain() = Message(
     sender = sender,
     receiver = receiver,
     text = text,
-    timestamp = timestamp,
+    timestamp = normalizeTimestamp(timestamp),
     isRead = isRead,
-    type = type,
+    type = type.lowercase(),
     mediaUrl = mediaUrl,
     duration = duration,
-    replyToId = replyToId,
+    replyToId = replyToId ?: 0,
     replyToText = replyToText,
-    isFavorite = isFavorite
+    isFavorite = isFavorite,
+    isSent = true,
+    isSynced = true
 )
+
+private fun normalizeTimestamp(isoTimestamp: String): String {
+    return try {
+        isoTimestamp
+            .replace("T", " ")
+            .replace("Z", "")
+            .substring(0, 19)
+    } catch (e: Exception) {
+        isoTimestamp
+    }
+}
 
 fun Message.toDto() = MessageDto(
     id = id,
@@ -118,11 +145,38 @@ fun ChatItemDto.toDomain() = ChatItem(
     isPinned = isPinned
 )
 
+// ✅ ИСПРАВЛЕНО: используем getEmail() вместо прямого email
 fun UserDto.toDomain() = User(
     id = id,
     login = login,
-    mail = mail,
+    mail = getUserEmail(),  // ← Всегда String, не null
     password = "",
     isOnline = isOnline,
     avatarPath = avatarUrl
+)
+
+fun User.toDto() = UserDto(
+    id = id,
+    login = login,
+    email = mail,
+    mail = mail,  // ← Добавляем оба поля
+    isOnline = isOnline,
+    avatarUrl = avatarPath
+)
+
+// ========== ДЛЯ СТАРОГО API ==========
+
+@Serializable
+data class LegacyAuthResponse(
+    val token: String,
+    val user: LegacyUserDto
+)
+
+@Serializable
+data class LegacyUserDto(
+    val id: Int = 0,
+    val login: String,
+    val mail: String,
+    val isOnline: Boolean = false,
+    val avatarUrl: String? = null
 )

@@ -10,85 +10,120 @@ object SyncManager {
 
     private const val TAG = "SyncManager"
     private var isSyncing = false
-    private val syncScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // Синхронизация чатов с сервера
+    suspend fun sendMediaMessage(
+        sender: String, receiver: String, text: String,
+        type: String, mediaUrl: String, duration: Int
+    ): Boolean {
+        val result = TransportManager.get().sendMediaMessage(sender, receiver, text, type, mediaUrl, duration)
+        return result is TransportResult.Success
+    }
+
     suspend fun syncChats(currentUser: String): Boolean = withContext(Dispatchers.IO) {
         if (isSyncing) return@withContext false
         isSyncing = true
 
         try {
+            Log.d(TAG, "🔄 Syncing chats for $currentUser")
+
             val result = TransportManager.get().getChatList(currentUser)
 
             when (result) {
                 is TransportResult.Success -> {
-                    Log.d(TAG, "✅ Synced ${result.data.size} chats from server")
+                    val serverChats = result.data
+                    Log.d(TAG, "📥 Got ${serverChats.size} chats from server")
 
-                    // Обновляем локальную БД новыми чатами
-                    for (chat in result.data) {
-                        // Создаём пустые сообщения если чата нет
-                        // Repository уже имеет данные
+                    for (chat in serverChats) {
+                        Repository.ensureUserExists(chat.name)
+                        syncMessages(currentUser, chat.name)
                     }
 
+                    Log.d(TAG, "✅ Sync complete: ${serverChats.size} chats")
                     isSyncing = false
-                    return@withContext true
+                    true
                 }
+
                 is TransportResult.Error -> {
                     Log.e(TAG, "❌ Sync failed: ${result.message}")
                     isSyncing = false
-                    return@withContext false
+                    false
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ Sync error", e)
             isSyncing = false
-            return@withContext false
+            false
         }
     }
 
-    // Поиск пользователей - сначала локально, потом сервер
-    suspend fun searchUsers(query: String, currentUser: String): List<User> = withContext(Dispatchers.IO) {
-        // 1. Сначала локальный поиск
-        val localResults = Repository.searchUsers(query, currentUser)
+    // ✅ ИСПРАВЛЕНО: проверка дубликатов по серверному ключу
+    private suspend fun syncMessages(currentUser: String, otherUser: String) {
+        val result = TransportManager.get().getMessages(currentUser, otherUser)
+        when (result) {
+            is TransportResult.Success -> {
+                val serverMessages = result.data
+                Log.d(TAG, "📥 Got ${serverMessages.size} messages for chat with $otherUser")
 
-        // 2. Если сервер доступен - ищем там
-        if (TransportManager.getMode() == TransportMode.SERVER) {
-            val result = TransportManager.get().searchUsers(query, currentUser)
-            when (result) {
-                is TransportResult.Success -> {
-                    // Объединяем результаты, убираем дубликаты
-                    val all = (localResults + result.data).distinctBy { it.login }
-                    return@withContext all
+                var savedCount = 0
+                var skippedCount = 0
+
+                for (msg in serverMessages) {
+                    // ✅ Проверяем ПО СЕРВЕРНОМУ timestamp
+                    val exists = Repository.messageExists(
+                        msg.sender, msg.receiver, msg.text, msg.timestamp
+                    )
+
+                    if (exists) {
+                        skippedCount++
+                        continue
+                    }
+
+                    Repository.ensureUserExists(msg.sender)
+                    Repository.ensureUserExists(msg.receiver)
+
+                    // ✅ Сохраняем С СЕРВЕРНЫМ timestamp (а не генерируем локально)
+                    val msgId = Repository.syncMessage(
+                        sender = msg.sender,
+                        receiver = msg.receiver,
+                        text = msg.text,
+                        timestamp = msg.timestamp
+                    )
+
+                    if (msgId > 0) {
+                        savedCount++
+                    }
                 }
-                else -> { /* ignore */ }
+
+                Log.d(TAG, "📝 $otherUser: +$savedCount новых, ⏭️ $skippedCount пропущено")
+            }
+            is TransportResult.Error -> {
+                Log.e(TAG, "❌ Failed to sync messages for $otherUser: ${result.message}")
             }
         }
-
-        localResults
     }
 
-    // Отправка сообщения - сохраняем локально, отправляем на сервер
+    suspend fun searchUsers(query: String, currentUser: String): List<User> =
+        withContext(Dispatchers.IO) {
+            val localResults = Repository.searchUsers(query, currentUser)
+
+            if (TransportManager.getMode() == TransportMode.SERVER) {
+                val result = TransportManager.get().searchUsers(query, currentUser)
+                when (result) {
+                    is TransportResult.Success -> {
+                        result.data.forEach { user ->
+                            Repository.ensureUserExists(user.login)
+                        }
+                        return@withContext (localResults + result.data).distinctBy { it.login }
+                    }
+                    else -> {}
+                }
+            }
+
+            localResults
+        }
+
     suspend fun sendMessage(sender: String, receiver: String, text: String): Boolean {
-        // 1. Всегда сохраняем локально
-        Repository.sendMessage(sender, receiver, text)
-        Log.d(TAG, "💾 Message saved locally: $text")
-
-        // 2. Пытаемся отправить на сервер
-        if (TransportManager.getMode() == TransportMode.SERVER) {
-            val result = TransportManager.get().sendMessage(sender, receiver, text)
-            when (result) {
-                is TransportResult.Success -> {
-                    Log.d(TAG, "✅ Message sent to server")
-                    return true
-                }
-                is TransportResult.Error -> {
-                    Log.e(TAG, "❌ Failed to send to server: ${result.message}")
-                    // Сообщение уже сохранено локально
-                    return true
-                }
-            }
-        }
-
-        return true // Локально сохранено
+        val result = TransportManager.get().sendMessage(sender, receiver, text)
+        return result is TransportResult.Success
     }
 }
