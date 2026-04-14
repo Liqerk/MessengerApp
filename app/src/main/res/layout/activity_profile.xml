@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -19,9 +22,10 @@
             android:id="@+id/back_button"
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:src="@android:drawable/ic_menu_revert"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Назад"/>
+            android:contentDescription="Назад"
+            android:src="@android:drawable/ic_menu_revert"
+            tools:ignore="TouchTargetSizeCheck" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -55,23 +59,7 @@
                     android:layout_width="96dp"
                     android:layout_height="96dp">
 
-                    <ImageView
-                        android:id="@+id/profile_avatar_image"
-                        android:layout_width="96dp"
-                        android:layout_height="96dp"
-                        android:scaleType="centerCrop"
-                        android:visibility="gone"
-                        android:contentDescription="Аватарка"/>
-
-                    <ImageView
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
-                        android:layout_gravity="bottom|end"
-                        android:src="@drawable/ic_camera"
-                        android:background="@drawable/camera_badge_background"
-                        android:padding="4dp"
-                        android:contentDescription="Сменить"/>
-
+                    <!-- 1. Буква (если нет фото) - Самый нижний слой -->
                     <TextView
                         android:id="@+id/profile_avatar"
                         android:layout_width="96dp"
@@ -81,6 +69,31 @@
                         android:textColor="@color/text_on_primary"
                         android:textSize="40sp"
                         android:textStyle="bold" />
+
+                    <!-- 2. Само фото аватара - Средний слой -->
+                    <ImageView
+                        android:id="@+id/profile_avatar_image"
+                        android:layout_width="96dp"
+                        android:layout_height="96dp"
+                        android:scaleType="centerCrop"
+                        android:visibility="gone"
+                        android:contentDescription="Аватарка"/>
+
+                    <!-- 3. Иконка камеры - Самый верхний слой (рисуется поверх всего!) -->
+                    <ImageView
+                        android:id="@+id/icon_camera"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:layout_gravity="bottom|end"
+                        android:layout_marginEnd="4dp"
+                        android:layout_marginBottom="4dp"
+                        android:src="@drawable/ic_camera"
+                        android:background="@drawable/camera_badge_background"
+                        android:padding="6dp"
+                        android:contentDescription="Сменить"
+                        android:elevation="4dp"
+                        app:tint="@android:color/white" />
+
                 </FrameLayout>
 
                 <TextView
@@ -106,6 +119,7 @@
                 android:layout_height="1dp"
                 android:background="@color/divider"/>
 
+            <!-- Остальные элементы без изменений -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -192,7 +206,8 @@
                     android:layout_height="wrap_content"/>
             </LinearLayout>
 
-            <!-- НОВЫЙ БЛОК: РЕЖИМ РАБОТЫ (Сервер/Локально) -->
+
+            <!-- Режим работы -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -222,13 +237,13 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:hint="http://10.0.2.2:8080"
-                    android:textSize="14sp"
-                    android:padding="12dp"
-
-                    android:textColor="@color/bg_input"
                     android:background="@android:drawable/editbox_background"
-                    android:inputType="textUri"/>
+                    android:hint="http://10.0.2.2:8080"
+                    android:inputType="textUri"
+                    android:minHeight="48dp"
+                    android:padding="12dp"
+                    android:textColor="@color/bg_input"
+                    android:textSize="14sp" />
             </LinearLayout>
 
             <View

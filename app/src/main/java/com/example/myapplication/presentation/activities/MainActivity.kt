@@ -2,6 +2,7 @@ package com.example.myapplication
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -9,7 +10,9 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
+import com.example.myapplication.transport.ServerTransport
 import com.example.myapplication.transport.TransportManager
+import com.example.myapplication.transport.TransportMode
 import com.example.myapplication.transport.TransportResult
 import kotlinx.coroutines.launch
 
@@ -21,8 +24,18 @@ class MainActivity : AppCompatActivity() {
         val session = SessionManager(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // Если уже залогинен — сразу к чатам
-        if (session.isLoggedIn()) {
+        // ✅ ИСПРАВЛЕНО: Проверяем и логин и токен
+        if (session.getLogin() != null && session.getToken() != null) {
+            // ✅ Восстанавливаем токен в Transport
+            if (TransportManager.getMode() == TransportMode.SERVER) {
+                val transport = TransportManager.get()
+                if (transport is ServerTransport) {
+                    transport.setToken(session.getToken()!!, session.getLogin()!!)
+                    transport.connect()
+                    Log.e("MainActivity", "🚨 Restored session and WebSocket")
+                }
+            }
+
             startActivity(Intent(this, ChatListActivity::class.java))
             finish()
             return
@@ -61,11 +74,34 @@ class MainActivity : AppCompatActivity() {
 
                 when (result) {
                     is TransportResult.Success -> {
+                        val token = result.data  // ✅ Получаем токен после регистрации
+
+                        Log.e("MainActivity", "🚨 Register success! Token: ${token.take(20)}...")
+
+                        // ✅ СОХРАНЯЕМ СЕССИЮ
+                        val sessionManager = SessionManager(this@MainActivity)
+                        sessionManager.saveSession(login, token)
+
+                        // ✅ УСТАНАВЛИВАЕМ ТОКЕН В TRANSPORT
+                        if (TransportManager.getMode() == TransportMode.SERVER) {
+                            val transport = TransportManager.get()
+                            if (transport is ServerTransport) {
+                                transport.setToken(token, login)
+                                transport.connect()
+                                Log.e("MainActivity", "🚨 WebSocket connected after registration")
+                            }
+                        }
+
                         Toast.makeText(this@MainActivity, "Аккаунт создан!", Toast.LENGTH_SHORT).show()
-                        startActivity(Intent(this@MainActivity, AuthActivity::class.java))
+
+                        // ✅ СРАЗУ ПЕРЕХОДИМ К ЧАТАМ (минуя AuthActivity)
+                        val intent = Intent(this@MainActivity, ChatListActivity::class.java)
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        startActivity(intent)
                         finish()
                     }
                     is TransportResult.Error -> {
+                        Log.e("MainActivity", "❌ Register failed: ${result.message}")
                         Toast.makeText(this@MainActivity, "Ошибка: ${result.message}", Toast.LENGTH_SHORT).show()
                     }
                 }

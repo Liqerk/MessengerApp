@@ -1,13 +1,16 @@
 package com.example.myapplication
 
-import android.view.View
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
+import android.view.View
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -15,15 +18,19 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.appbar.AppBarLayout
-import android.widget.FrameLayout
-import android.widget.ImageView
 import com.bumptech.glide.Glide
+import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.example.myapplication.transport.ServerTransport
 import com.example.myapplication.transport.TransportManager
 import com.example.myapplication.transport.TransportMode
 import com.example.myapplication.transport.TransportResult
+import com.google.android.material.appbar.AppBarLayout
+import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 class ChatListActivity : AppCompatActivity() {
 
@@ -35,7 +42,6 @@ class ChatListActivity : AppCompatActivity() {
     private lateinit var appBarLayout: AppBarLayout
     private lateinit var connectionStatus: TextView
 
-    // Состояние поиска
     private var isInSearchMode = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,72 +51,143 @@ class ChatListActivity : AppCompatActivity() {
         Repository.init(this)
         val session = SessionManager(this)
         currentUser = session.getLogin() ?: ""
+        val token = session.getToken() ?: ""
 
+        Log.e("ChatListActivity", "🚨🚨🚨 ChatListActivity START")
+        Log.e("ChatListActivity", "🚨 login: $currentUser, token: ${token.take(20)}...")
+
+        // ✅ ВАЖНО: Подключаем WebSocket при старте!
+        if (token.isNotEmpty() && TransportManager.getMode() == TransportMode.SERVER) {
+            val transport = TransportManager.get()
+            if (transport is ServerTransport) {
+                transport.setToken(token, currentUser)
+
+                // ✅ ПРИНУДИТЕЛЬНОЕ ПОДКЛЮЧЕНИЕ
+                Log.e("ChatListActivity", "🚨 Force connecting WebSocket...")
+                transport.connect()
+            }
+        }
         if (currentUser.isEmpty()) {
             startActivity(Intent(this, AuthActivity::class.java))
             finish()
             return
         }
 
-        // Инициализация UI
         recyclerView = findViewById(R.id.chat_recycler_view)
         emptyText = findViewById(R.id.empty_text)
         searchInput = findViewById(R.id.search_input)
         appBarLayout = findViewById(R.id.app_bar)
         connectionStatus = findViewById(R.id.connection_status)
 
-        // Обновляем статус подключения
         updateConnectionStatus()
+        setupMyAvatar()
+        setupRecyclerView()
+        setupAppBar()
+        setupSearch()
+        setupThemeButton()
+        setupLogoutButton()
+    }
 
-        // Аватар пользователя
+    override fun onResume() {
+        super.onResume()
+        loadChats()
+        updateConnectionStatus()
+        setupMyAvatar()
+        appBarLayout.post { appBarLayout.setExpanded(false, false) }
+
+        // --- НОВОЕ: Обработка события подключения и отправки ---
+        TransportManager.onNetworkEvent = { event ->
+            runOnUiThread {
+                when (event) {
+                    is TransportManager.NetworkEvent.PendingMessagesAvailable -> {
+                        // Показываем сообщение внизу экрана (Snackbar)
+                        Snackbar.make(recyclerView, "Найдено ${event.count} неотправленных сообщений. Отправить?", Snackbar.LENGTH_INDEFINITE)
+                            .setAction("ОТПРАВИТЬ") {
+                                MessageQueue.processPending()
+                            }
+                            .show()
+                    }
+                    else -> { }
+                }
+            }
+        }
+    }
+
+    // ==================== UI INIT ====================
+
+    private fun setupMyAvatar() {
         val myAvatarText: TextView = findViewById(R.id.my_avatar)
         val myAvatarImage: ImageView = findViewById(R.id.my_avatar_image)
 
         val avatarPath = Repository.getAvatar(currentUser)
-        if (avatarPath != null && File(avatarPath).exists()) {
-            myAvatarImage.visibility = View.VISIBLE
-            myAvatarText.visibility = View.GONE
-            Glide.with(this).load(File(avatarPath)).circleCrop().into(myAvatarImage)
+
+        if (!avatarPath.isNullOrEmpty()) {
+            val isHttp = avatarPath.startsWith("http://") || avatarPath.startsWith("https://")
+
+            if (isHttp) {
+                myAvatarImage.visibility = View.VISIBLE
+                myAvatarText.visibility = View.GONE
+
+                Glide.with(this)
+                    .load(avatarPath)
+                    .circleCrop()
+                    .into(myAvatarImage)
+            } else {
+                val localFile = File(avatarPath)
+                if (localFile.exists()) {
+                    myAvatarImage.visibility = View.VISIBLE
+                    myAvatarText.visibility = View.GONE
+
+                    Glide.with(this)
+                        .load(localFile)
+                        .circleCrop()
+                        .into(myAvatarImage)
+                } else {
+                    showMyAvatarLetter(myAvatarText, myAvatarImage)
+                }
+            }
         } else {
-            myAvatarImage.visibility = View.GONE
-            myAvatarText.visibility = View.VISIBLE
-            myAvatarText.text = currentUser.first().uppercase()
-            val colors = intArrayOf(
-                0xFF2196F3.toInt(), 0xFF4CAF50.toInt(), 0xFFFF9800.toInt(),
-                0xFF9C27B0.toInt(), 0xFFE91E63.toInt(), 0xFF00BCD4.toInt()
-            )
-            myAvatarText.background.setTint(colors[Math.abs(currentUser.hashCode()) % colors.size])
+            showMyAvatarLetter(myAvatarText, myAvatarImage)
         }
 
-        // Открытие профиля
         val avatarContainer = findViewById<FrameLayout>(R.id.my_avatar_container)
         avatarContainer.setOnClickListener {
             startActivity(Intent(this, ProfileActivity::class.java))
         }
+    }
 
-        // Настройка RecyclerView
+
+
+    private fun showMyAvatarLetter(text: TextView, image: ImageView) {
+        image.visibility = View.GONE
+        text.visibility = View.VISIBLE
+        text.text = currentUser.firstOrNull()?.uppercase() ?: "?"
+        val colors = intArrayOf(
+            0xFF2196F3.toInt(), 0xFF4CAF50.toInt(), 0xFFFF9800.toInt(),
+            0xFF9C27B0.toInt(), 0xFFE91E63.toInt(), 0xFF00BCD4.toInt()
+        )
+        text.background.setTint(colors[abs(currentUser.hashCode()) % colors.size])
+    }
+
+    private fun setupRecyclerView() {
         recyclerView.layoutManager = LinearLayoutManager(this)
         adapter = ChatRecyclerAdapter(
             emptyList(),
-            onClick = { chatItem ->
-                openChat(chatItem.name)
-            },
-            onLongClick = { chatItem ->
-                showChatOptions(chatItem)
-            }
+            onClick = { chatItem -> openChat(chatItem.name) },
+            onLongClick = { chatItem -> showChatOptions(chatItem) }
         )
         recyclerView.adapter = adapter
+    }
 
-        // Сворачивание AppBar при старте
+    private fun setupAppBar() {
         appBarLayout.post {
             appBarLayout.setExpanded(false, false)
         }
 
-        // Очистка поиска при сворачивании AppBar
         appBarLayout.addOnOffsetChangedListener(
             AppBarLayout.OnOffsetChangedListener { _, verticalOffset ->
                 val totalRange = appBarLayout.totalScrollRange
-                if (totalRange > 0 && Math.abs(verticalOffset) == totalRange) {
+                if (totalRange > 0 && abs(verticalOffset) == totalRange) {
                     if (searchInput.text.toString().isNotEmpty()) {
                         searchInput.text.clear()
                         isInSearchMode = false
@@ -119,11 +196,13 @@ class ChatListActivity : AppCompatActivity() {
                 }
             }
         )
+    }
 
-        // Живой поиск
+    private fun setupSearch() {
         searchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+
             override fun afterTextChanged(s: Editable?) {
                 val query = s.toString().trim()
 
@@ -133,7 +212,8 @@ class ChatListActivity : AppCompatActivity() {
                     return
                 }
 
-                // Поиск пользователей через @
+                isInSearchMode = true
+
                 if (query.startsWith("@")) {
                     val userQuery = query.removePrefix("@").trim()
                     if (userQuery.isNotEmpty()) {
@@ -141,15 +221,14 @@ class ChatListActivity : AppCompatActivity() {
                     } else {
                         loadChats()
                     }
-                }
-                // Поиск сообщений
-                else if (query.length >= 2) {
-                    searchMessages(query)
+                } else {
+                    searchChatsAndMessages(query)
                 }
             }
         })
+    }
 
-        // Тема
+    private fun setupThemeButton() {
         val themeButton: ImageButton = findViewById(R.id.theme_button)
         themeButton.setOnClickListener {
             val nightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
@@ -159,14 +238,19 @@ class ChatListActivity : AppCompatActivity() {
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
             }
         }
+    }
 
-        // Выход
+    private fun setupLogoutButton() {
+        val session = SessionManager(this)
         val logoutButton: ImageButton = findViewById(R.id.logout_button)
+
         logoutButton.setOnClickListener {
             android.app.AlertDialog.Builder(this)
                 .setTitle("Выйти?")
                 .setMessage("Вы уверены что хотите выйти из аккаунта?")
                 .setPositiveButton("Выйти") { _, _ ->
+                    TransportManager.get().disconnect()
+                    SessionManager(this).logout()
                     session.logout()
                     Toast.makeText(this, "Вы вышли", Toast.LENGTH_SHORT).show()
                     val intent = Intent(this, AuthActivity::class.java)
@@ -175,15 +259,6 @@ class ChatListActivity : AppCompatActivity() {
                 }
                 .setNegativeButton("Отмена", null)
                 .show()
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        loadChats()
-        updateConnectionStatus()
-        appBarLayout.post {
-            appBarLayout.setExpanded(false, false)
         }
     }
 
@@ -199,36 +274,39 @@ class ChatListActivity : AppCompatActivity() {
 
     private fun searchUsers(query: String) {
         lifecycleScope.launch {
-            // Сначала локальный поиск
             val localUsers = Repository.searchUsers(query, currentUser)
 
-            // Потом серверный если подключен
             if (TransportManager.getMode() == TransportMode.SERVER) {
                 val result = TransportManager.get().searchUsers(query, currentUser)
                 when (result) {
                     is TransportResult.Success -> {
-                        val items = result.data
+                        val merged = (localUsers + result.data)
                             .filter { it.login != currentUser }
-                            .map { user ->
-                                ChatItem(
-                                    id = user.id,
-                                    name = user.login,
-                                    image = "",
-                                    lastMessage = if (user.isOnline) "🟢 В сети" else "⬜ Не в сети",
-                                    lastMessageTime = "",
-                                    unreadCount = 0,
-                                    isOnline = user.isOnline
-                                )
-                            }
+                            .distinctBy { it.login }
+
+                        val items = merged.map { user ->
+                            ChatItem(
+                                id = user.id,
+                                name = user.login,
+                                image = "",
+                                lastMessage = if (user.isOnline) "🟢 В сети" else "⬜ Не в сети",
+                                lastMessageTime = "",
+                                unreadCount = 0,
+                                isOnline = user.isOnline
+                            )
+                        }
+
                         adapter.updateData(items)
                         updateEmptyState(items.isEmpty(), "Пользователи не найдены")
                         return@launch
                     }
-                    else -> { /* continue with local */ }
+
+                    is TransportResult.Error -> {
+                        android.util.Log.e("SEARCH_USERS", "server error = ${result.message}")
+                    }
                 }
             }
 
-            // Показываем локальных
             val items = localUsers.map { user ->
                 ChatItem(
                     id = user.id,
@@ -240,15 +318,43 @@ class ChatListActivity : AppCompatActivity() {
                     isOnline = false
                 )
             }
+
             adapter.updateData(items)
             updateEmptyState(items.isEmpty(), "Пользователи не найдены")
         }
     }
 
-    // ==================== ПОИСК СООБЩЕНИЙ ====================
+    // ==================== ПОИСК ЧАТОВ И СООБЩЕНИЙ ====================
 
-    private fun searchMessages(query: String) {
+    private fun searchChatsAndMessages(query: String) {
         lifecycleScope.launch {
+            val allChats = Repository.getChatList(currentUser)
+
+            // 1. Поиск по имени чата / собеседника
+            val chatsByName = allChats.filter {
+                it.name.contains(query, ignoreCase = true)
+            }.sortedWith(
+                compareByDescending<ChatItem> { it.isPinned }
+                    .thenByDescending { it.lastMessageTime }
+            )
+
+            // 2. Поиск по тексту последнего сообщения в чате
+            val chatsByLastMessage = allChats.filter {
+                it.lastMessage.contains(query, ignoreCase = true)
+            }.sortedWith(
+                compareByDescending<ChatItem> { it.isPinned }
+                    .thenByDescending { it.lastMessageTime }
+            )
+
+            val mergedByChats = (chatsByName + chatsByLastMessage).distinctBy { it.name }
+
+            if (mergedByChats.isNotEmpty()) {
+                adapter.updateData(mergedByChats)
+                updateEmptyState(false, "")
+                return@launch
+            }
+
+            // 3. Если по чатам не нашли — ищем по всем сообщениям
             val results = Repository.searchGlobalMessages(currentUser, query)
 
             if (results.isEmpty()) {
@@ -257,7 +363,6 @@ class ChatListActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // Группируем по собеседнику
             val grouped = results.groupBy { msg ->
                 if (msg.sender == currentUser) msg.receiver else msg.sender
             }
@@ -273,11 +378,16 @@ class ChatListActivity : AppCompatActivity() {
                     unreadCount = messages.size,
                     isOnline = false
                 )
-            }
+            }.sortedByDescending { it.lastMessageTime }
 
             adapter.updateData(items)
             updateEmptyState(items.isEmpty(), "Ничего не найдено")
         }
+    }
+
+    // Оставляю старый метод, чтобы ничего не ломать, но теперь он просто вызывает улучшенный поиск
+    private fun searchMessages(query: String) {
+        searchChatsAndMessages(query)
     }
 
     // ==================== ЗАГРУЗКА ЧАТОВ ====================
@@ -335,6 +445,7 @@ class ChatListActivity : AppCompatActivity() {
                             Toast.LENGTH_SHORT
                         ).show()
                     }
+
                     1 -> {
                         android.app.AlertDialog.Builder(this)
                             .setTitle("Удалить чат?")
@@ -357,11 +468,12 @@ class ChatListActivity : AppCompatActivity() {
     private fun updateEmptyState(isEmpty: Boolean, text: String) {
         if (isEmpty) {
             emptyText.text = text
-            emptyText.visibility = TextView.VISIBLE
-            recyclerView.visibility = RecyclerView.GONE
+            emptyText.visibility = View.VISIBLE
+            recyclerView.visibility = View.GONE
         } else {
-            emptyText.visibility = TextView.GONE
-            recyclerView.visibility = RecyclerView.VISIBLE
+            emptyText.visibility = View.GONE
+            recyclerView.visibility = View.VISIBLE
         }
     }
+
 }
