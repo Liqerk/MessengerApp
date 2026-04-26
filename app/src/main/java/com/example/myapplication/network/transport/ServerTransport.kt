@@ -1,9 +1,9 @@
 package com.example.myapplication.transport
 
 import android.util.Log
+import com.example.myapplication.AppLifecycleTracker
 import com.example.myapplication.Message
 import com.example.myapplication.Repository
-import com.example.myapplication.SessionManager
 import com.example.myapplication.models.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.decodeFromString
@@ -15,8 +15,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 import com.example.myapplication.User
 import com.example.myapplication.ChatItem
+import com.example.myapplication.NotificationHelper
 import okhttp3.RequestBody.Companion.asRequestBody
-import org.json.JSONObject
 import java.io.File
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import java.util.Collections
@@ -27,15 +27,21 @@ class ServerTransport(
 
     private val TAG = "ServerTransport"
     private val processedMessageIds = Collections.synchronizedSet(mutableSetOf<String>())
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+    }
+
+    companion object {
+        var appContext: android.content.Context? = null
     }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .pingInterval(20, TimeUnit.SECONDS)  // ✅ ПИНГ КАЖДЫЕ 20 СЕК
         .build()
 
     private var webSocket: WebSocket? = null
@@ -43,20 +49,43 @@ class ServerTransport(
     private var currentUserLogin: String = ""
     private var _isConnected = false
 
+    // ✅ АВТОПЕРЕПОДКЛЮЧЕНИЕ
+    private var shouldBeConnected = false
+    private var reconnectJob: Job? = null
+    private var healthCheckJob: Job? = null
+    private var deleteCallback: ((clientMessageId: String) -> Unit)? = null
+    private var deleteChatCallback: ((String) -> Unit)? = null
+
+    fun onDeleteMessageReceived(callback: (clientMessageId: String) -> Unit) {
+        deleteCallback = callback
+    }
+
+    fun onDeleteChatReceived(callback: (String) -> Unit) {
+        deleteChatCallback = callback
+    }
     var onConnectionStateChange: ((Boolean) -> Unit)? = null
 
     private var messageCallback: ((Message) -> Unit)? = null
     private var typingCallback: ((String, Boolean) -> Unit)? = null
     private var readCallback: ((String) -> Unit)? = null
     private var onlineCallback: ((String, Boolean) -> Unit)? = null
+    private val messageCallbacks = mutableListOf<(Message) -> Unit>()
+
+    override fun onMessageReceived(callback: (Message) -> Unit) {
+        messageCallbacks.add(callback)
+    }
+
+    override fun removeMessageCallback(callback: (Message) -> Unit) {
+        messageCallbacks.remove(callback)
+    }
+
+    fun clearMessageCallbacks() {
+        messageCallbacks.clear()
+    }
 
     fun setToken(savedToken: String, login: String) {
         this.token = savedToken
         this.currentUserLogin = login
-    }
-
-    override fun onMessageReceived(callback: (Message) -> Unit) {
-        messageCallback = callback
     }
 
     fun onTypingReceived(callback: (String, Boolean) -> Unit) {
@@ -112,30 +141,136 @@ class ServerTransport(
         webSocket?.send(envelope)
     }
 
+    // ==========================================
+    // ПОДКЛЮЧЕНИЕ С АВТОПЕРЕПОДКЛЮЧЕНИЕМ
+    // ==========================================
+
+    override fun connect() {
+        if (token.isEmpty()) {
+            Log.e(TAG, "Cannot connect: token is EMPTY!")
+            return
+        }
+
+        shouldBeConnected = true
+        startHealthCheck()  // ✅ ЗАПУСКАЕМ МОНИТОРИНГ
+        attemptConnect()
+    }
+
+    private fun attemptConnect() {
+        if (!shouldBeConnected) return
+
+        val wsUrl = baseUrl
+            .replace("http://", "ws://")
+            .replace("https://", "wss://") + "/ws?token=$token"
+
+        Log.d(TAG, "🔌 Connecting to: $wsUrl")
+
+        val request = Request.Builder()
+            .url(wsUrl)
+            .addHeader("User-Agent", "Android Messenger")
+            .build()
+
+        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                _isConnected = true
+                reconnectJob?.cancel()
+                onConnectionStateChange?.invoke(true)
+                Log.d(TAG, "✅ WebSocket CONNECTED")
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                _isConnected = false
+                onConnectionStateChange?.invoke(false)
+                Log.e(TAG, "❌ WebSocket FAILED: ${t.message}")
+
+                scheduleReconnect(3000)  // ✅ ЧЕРЕЗ 3 СЕК
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                handleWebSocketMessage(text)
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                _isConnected = false
+                onConnectionStateChange?.invoke(false)
+                webSocket.close(1000, null)
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                _isConnected = false
+                onConnectionStateChange?.invoke(false)
+                Log.w(TAG, "🔌 WebSocket CLOSED: $code $reason")
+
+                if (shouldBeConnected) {
+                    scheduleReconnect(3000)  // ✅ ЧЕРЕЗ 3 СЕК
+                }
+            }
+        })
+    }
+
+    // ✅ ПЕРЕПОДКЛЮЧЕНИЕ
+    private fun scheduleReconnect(delayMs: Long) {
+        if (!shouldBeConnected) return
+
+        reconnectJob?.cancel()
+        reconnectJob = CoroutineScope(Dispatchers.IO).launch {
+            delay(delayMs)
+            if (shouldBeConnected && !_isConnected) {
+                Log.d(TAG, "🔄 Reconnecting...")
+                attemptConnect()
+            }
+        }
+    }
+
+    // ✅ ПЕРИОДИЧЕСКАЯ ПРОВЕРКА КАЖДЫЕ 10 СЕКУНД
+    private fun startHealthCheck() {
+        healthCheckJob?.cancel()
+        healthCheckJob = CoroutineScope(Dispatchers.IO).launch {
+            while (shouldBeConnected) {
+                delay(10_000)  // Проверяем каждые 10 секунд
+
+                if (!_isConnected && shouldBeConnected) {
+                    Log.d(TAG, "🏥 Health check: not connected, reconnecting...")
+                    attemptConnect()
+                }
+            }
+        }
+    }
+
+    override fun disconnect() {
+        shouldBeConnected = false
+        reconnectJob?.cancel()
+        healthCheckJob?.cancel()  // ✅ ОСТАНАВЛИВАЕМ МОНИТОРИНГ
+        webSocket?.close(1000, "Client disconnect")
+        webSocket = null
+        _isConnected = false
+        onConnectionStateChange?.invoke(false)
+        Log.d(TAG, "🔌 Disconnected")
+    }
+
+    override fun isConnected() = _isConnected
+
+    // ==========================================
+    // ОСТАЛЬНЫЕ МЕТОДЫ БЕЗ ИЗМЕНЕНИЙ
+    // ==========================================
+
     override suspend fun register(login: String, mail: String, password: String): TransportResult<String> {
         return withContext(Dispatchers.IO) {
             try {
                 val body = json.encodeToString(RegisterRequest(login, mail, password))
-
-                Log.e(TAG, "🚨 Register request: $body")
-
                 val response = postRaw("/auth/register", body)
 
                 if (response != null) {
-                    Log.e(TAG, "🚨 Register response: ${response.take(100)}")
-
                     try {
                         val authResponse = json.decodeFromString<LegacyAuthResponse>(response)
                         token = authResponse.token
                         currentUserLogin = login
-                        Log.e(TAG, "🚨 Register successful, token: ${token.take(20)}...")
                         TransportResult.Success(token)
                     } catch (e: Exception) {
                         val apiRes = json.decodeFromString<ApiResponse<AuthResponse>>(response)
                         if (apiRes.success && apiRes.data != null) {
                             token = apiRes.data.accessToken
                             currentUserLogin = login
-                            Log.e(TAG, "🚨 Register successful (new API), token: ${token.take(20)}...")
                             TransportResult.Success(token)
                         } else {
                             TransportResult.Error(apiRes.error ?: "Registration failed")
@@ -162,7 +297,6 @@ class ServerTransport(
                     if (apiRes.success && apiRes.data != null) {
                         token = apiRes.data.accessToken
                         currentUserLogin = login
-                        Log.d(TAG, "✅ Login successful")
                         TransportResult.Success(token)
                     } else {
                         TransportResult.Error(apiRes.error ?: "Invalid credentials")
@@ -180,49 +314,157 @@ class ServerTransport(
     override suspend fun sendMessage(
         sender: String,
         receiver: String,
-        text: String
+        text: String,
+        clientMessageId: String
     ): TransportResult<Int> {
         return withContext(Dispatchers.IO) {
             try {
                 if (_isConnected && webSocket != null) {
-                    val legacyMessage = mapOf(
+                    val msg = mapOf(
                         "sender" to sender,
                         "receiver" to receiver,
                         "text" to text,
-                        "type" to "text"
+                        "type" to "text",
+                        "clientMessageId" to clientMessageId
                     )
-
-                    val jsonToSend = json.encodeToString(legacyMessage)
-                    Log.d(TAG, "📤 Sending via WS: $jsonToSend")
-
-                    val sent = webSocket?.send(jsonToSend) == true
-
-                    if (sent) {
-                        Log.d(TAG, "✅ Message sent via WS")
-                        TransportResult.Success(1)
-                    } else {
-                        TransportResult.Error("WebSocket send failed")
-                    }
+                    val sent = webSocket?.send(json.encodeToString(msg)) == true
+                    if (sent) TransportResult.Success(1) else TransportResult.Error("WS failed")
                 } else {
-                    Log.w(TAG, "⚠️ WebSocket not connected, using HTTP fallback")
                     val body = json.encodeToString(
                         mapOf(
                             "sender" to sender,
                             "receiver" to receiver,
-                            "text" to text
+                            "text" to text,
+                            "clientMessageId" to clientMessageId
                         )
                     )
                     val response = postRaw("/messages", body)
+
                     if (response != null) {
-                        TransportResult.Success(1)
+                        try {
+                            val msgDto = json.decodeFromString<MessageDto>(response)
+
+                            if (msgDto.clientMessageId.isNotBlank()) {
+                                Repository.confirmOwnMessage(
+                                    clientMessageId = msgDto.clientMessageId,
+                                    serverTimestamp = msgDto.timestamp,
+                                    serverId = msgDto.id
+                                )
+                                Log.d(TAG, "✅ HTTP msg confirmed: CID=${msgDto.clientMessageId}")
+                            }
+
+                            TransportResult.Success(1)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to parse HTTP response", e)
+                            TransportResult.Success(1)
+                        }
                     } else {
                         TransportResult.Error("HTTP send failed")
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Send message error", e)
                 TransportResult.Error("Failed to send", e)
             }
+        }
+    }
+
+    private fun handleWebSocketMessage(text: String) {
+        try {
+            val envelope = json.decodeFromString<WsEnvelope>(text)
+
+            when (envelope.type) {
+                "message" -> {
+                    val msgDto = json.decodeFromString<MessageDto>(envelope.payload)
+
+                    // ✅ СОБСТВЕННЫЕ СООБЩЕНИЯ - ИГНОРИРУЕМ (сервер больше не шлёт)
+                    if (msgDto.sender == currentUserLogin) {
+                        Log.d(TAG, "⏭️ Skipping own message echo")
+                        return
+                    }
+
+                    // ✅ ВХОДЯЩИЕ СООБЩЕНИЯ
+                    val msg = msgDto.toDomain()
+                    val msgKey = msgDto.clientMessageId.ifBlank {
+                        "${msg.sender}:${msg.receiver}:${msg.text}:${msg.timestamp}"
+                    }
+
+                    if (!processedMessageIds.add(msgKey)) {
+                        Log.d(TAG, "⏭️ Duplicate ignored: $msgKey")
+                        return
+                    }
+
+                    if (processedMessageIds.size > 100) {
+                        val iterator = processedMessageIds.iterator()
+                        repeat(50) {
+                            if (iterator.hasNext()) {
+                                iterator.next()
+                                iterator.remove()
+                            }
+                        }
+                    }
+
+                    Repository.saveIncomingMessage(msg)
+
+                    if (!AppLifecycleTracker.isAppInForeground) {
+                        appContext?.let { ctx ->
+                            NotificationHelper.showMessageNotification(ctx, msg.sender, msg.text)
+                        }
+                    }
+
+                    CoroutineScope(Dispatchers.Main).launch {
+                        messageCallbacks.forEach { it.invoke(msg) }
+                    }
+                }
+
+                "typing" -> {
+                    val event = json.decodeFromString<WsTypingEvent>(envelope.payload)
+                    CoroutineScope(Dispatchers.Main).launch {
+                        typingCallback?.invoke(event.sender, event.isTyping)
+                    }
+                }
+
+                "read" -> {
+                    val event = json.decodeFromString<WsReadEvent>(envelope.payload)
+                    CoroutineScope(Dispatchers.Main).launch {
+                        readCallback?.invoke(event.reader)
+                    }
+                }
+
+                "online" -> {
+                    val event = json.decodeFromString<WsOnlineEvent>(envelope.payload)
+                    CoroutineScope(Dispatchers.Main).launch {
+                        onlineCallback?.invoke(event.login, event.isOnline)
+                    }
+                }
+
+                "delete" -> {
+                    val event = json.decodeFromString<WsDeleteEvent>(envelope.payload)
+                    Log.d(TAG, "🗑️ Delete event: CID=${event.clientMessageId}")
+
+                    CoroutineScope(Dispatchers.Main).launch {
+                        val deleted = if (event.clientMessageId.isNotBlank()) {
+                            Repository.deleteMessageByClientId(event.clientMessageId)
+                        } else {
+                            false
+                        }
+
+                        if (deleted) {
+                            deleteCallback?.invoke(event.clientMessageId)
+                        }
+                    }
+                }
+
+                "delete_chat" -> {
+                    val event = json.decodeFromString<WsDeleteChatEvent>(envelope.payload)
+                    Log.d(TAG, "🗑️ Delete chat event: ${event.chatWith}")
+
+                    CoroutineScope(Dispatchers.Main).launch {
+                        deleteChatCallback?.invoke(event.chatWith)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ handleWebSocketMessage error", e)
         }
     }
 
@@ -287,7 +529,7 @@ class ServerTransport(
                 val apiResponse = get("/api/v1/users/search?q=$query")
                 if (apiResponse != null) {
                     try {
-                        val wrapped = json.decodeFromString<com.example.myapplication.models.ApiResponse<List<UserDto>>>(apiResponse)
+                        val wrapped = json.decodeFromString<ApiResponse<List<UserDto>>>(apiResponse)
                         val users = wrapped.data?.map { it.toDomain() } ?: emptyList()
                         return@withContext TransportResult.Success(users)
                     } catch (e: Exception) {
@@ -302,195 +544,6 @@ class ServerTransport(
             }
         }
     }
-
-    override fun connect() {
-        if (token.isEmpty()) {
-            Log.e(TAG, "🚨❌ Cannot connect: token is EMPTY!")
-            return
-        }
-
-        Log.e(TAG, "🚨 baseUrl: $baseUrl")
-
-        val wsUrl = baseUrl
-            .replace("http://", "ws://")
-            .replace("https://", "wss://") + "/ws?token=$token"
-
-        Log.e(TAG, "🚨 Connecting to: $wsUrl")
-
-        val request = Request.Builder()
-            .url(wsUrl)
-            .addHeader("User-Agent", "Android Messenger")
-            .build()
-
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                _isConnected = true
-                onConnectionStateChange?.invoke(true)
-                Log.e(TAG, "🚨✅✅✅ WEBSOCKET CONNECTED! ✅✅✅")
-                Log.e(TAG, "🚨 Response: ${response.code} ${response.message}")
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                _isConnected = false
-                onConnectionStateChange?.invoke(false)
-
-                Log.e(TAG, "🚨❌❌❌ WEBSOCKET FAILED: ${t.javaClass.simpleName}")
-                Log.e(TAG, "🚨 Error message: ${t.message}")
-                Log.e(TAG, "🚨 URL attempted: $wsUrl")
-
-                if (response != null) {
-                    Log.e(TAG, "🚨 Response code: ${response.code}")
-                    Log.e(TAG, "🚨 Response message: ${response.message}")
-                    response.body?.string()?.let {
-                        Log.e(TAG, "🚨 Response body: $it")
-                    }
-                }
-
-                t.printStackTrace()
-            }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                Log.e(TAG, "🚨📥📥📥 WEBSOCKET MESSAGE: ${text.take(100)}")
-                handleWebSocketMessage(text)
-            }
-
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                _isConnected = false
-                onConnectionStateChange?.invoke(false)
-                webSocket.close(1000, null)
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                _isConnected = false
-                onConnectionStateChange?.invoke(false)
-            }
-        })
-    }
-
-    private fun handleWebSocketMessage(text: String) {
-        try {
-            // ✅ ПОПЫТКА 1: Envelope формат
-            try {
-                val envelope = json.decodeFromString<WsEnvelope>(text)
-
-                when (envelope.type) {
-                    "message" -> {
-                        var msgDto = json.decodeFromString<MessageDto>(envelope.payload)
-
-                        // ✅ ИГНОРИРУЕМ свои собственные сообщения (сервер шлёт подтверждение)
-                        if (msgDto.sender == currentUserLogin) {
-                            Log.d(TAG, "⏭️ Ignoring own message confirmation: ${msgDto.text.take(20)}")
-                            return
-                        }
-
-                        if (msgDto.timestamp.isBlank()) {
-                            val now = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-                                .format(java.util.Date())
-                            msgDto = msgDto.copy(timestamp = now)
-                        }
-
-                        val msg = msgDto.toDomain()
-
-                        // ✅ Дедупликация
-                        val msgKey = "${msg.sender}:${msg.receiver}:${msg.text}:${msg.timestamp}"
-                        if (!processedMessageIds.add(msgKey)) {
-                            Log.d(TAG, "⏭️ Duplicate WS message skipped")
-                            return
-                        }
-                        if (processedMessageIds.size > 100) {
-                            val iterator = processedMessageIds.iterator()
-                            repeat(50) { if (iterator.hasNext()) { iterator.next(); iterator.remove() } }
-                        }
-
-                        Repository.saveIncomingMessage(msg)
-
-                        CoroutineScope(Dispatchers.Main).launch {
-                            messageCallback?.invoke(msg)
-                        }
-                    }
-
-                    "typing" -> {
-                        val event = json.decodeFromString<WsTypingEvent>(envelope.payload)
-                        CoroutineScope(Dispatchers.Main).launch {
-                            typingCallback?.invoke(event.sender, event.isTyping)
-                        }
-                    }
-
-                    "read" -> {
-                        val event = json.decodeFromString<WsReadEvent>(envelope.payload)
-                        CoroutineScope(Dispatchers.Main).launch {
-                            readCallback?.invoke(event.reader)
-                        }
-                    }
-
-                    "online" -> {
-                        val event = json.decodeFromString<WsOnlineEvent>(envelope.payload)
-                        CoroutineScope(Dispatchers.Main).launch {
-                            onlineCallback?.invoke(event.login, event.isOnline)
-                        }
-                    }
-                }
-
-                return
-
-            } catch (e: Exception) {
-                Log.d(TAG, "Not envelope format, trying legacy: ${e.message}")
-            }
-
-            // ✅ ПОПЫТКА 2: Legacy формат
-            try {
-                var msgDto = json.decodeFromString<MessageDto>(text)
-
-                // ✅ ИГНОРИРУЕМ свои собственные сообщения
-                if (msgDto.sender == currentUserLogin) {
-                    Log.d(TAG, "⏭️ Ignoring own legacy message confirmation: ${msgDto.text.take(20)}")
-                    return
-                }
-
-                if (msgDto.timestamp.isBlank()) {
-                    val now = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-                        .format(java.util.Date())
-                    msgDto = msgDto.copy(timestamp = now)
-                    Log.d(TAG, "⚠️ Legacy no timestamp, generated: $now")
-                }
-
-                val msg = msgDto.toDomain()
-
-                // ✅ Дедупликация
-                val msgKey = "${msg.sender}:${msg.receiver}:${msg.text}:${msg.timestamp}"
-                if (!processedMessageIds.add(msgKey)) {
-                    Log.d(TAG, "⏭️ Duplicate WS legacy message skipped")
-                    return
-                }
-                if (processedMessageIds.size > 100) {
-                    val iterator = processedMessageIds.iterator()
-                    repeat(50) { if (iterator.hasNext()) { iterator.next(); iterator.remove() } }
-                }
-
-                Log.d(TAG, "✅ Legacy: ${msg.sender}→${msg.receiver}: ${msg.text.take(20)} | TS=${msg.timestamp}")
-
-                Repository.saveIncomingMessage(msg)
-
-                CoroutineScope(Dispatchers.Main).launch {
-                    messageCallback?.invoke(msg)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Failed to parse: $text", e)
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ handleWebSocketMessage error", e)
-        }
-    }
-
-    override fun disconnect() {
-        webSocket?.close(1000, "Client disconnect")
-        webSocket = null
-        _isConnected = false
-        onConnectionStateChange?.invoke(false)
-    }
-
-    override fun isConnected() = _isConnected
 
     private fun postRaw(path: String, jsonBody: String): String? {
         return try {
@@ -561,7 +614,13 @@ class ServerTransport(
                 val body = response.body?.string()
 
                 if (response.isSuccessful && body != null) {
-                    val url = org.json.JSONObject(body).getString("url")
+                    var url = org.json.JSONObject(body).getString("url")
+
+                    if (url.startsWith("/")) {
+                        url = "$baseUrl$url"
+                    }
+
+                    Log.d(TAG, "✅ Upload success: $url")
                     TransportResult.Success(url)
                 } else {
                     TransportResult.Error("Upload failed: ${response.code}")
@@ -571,14 +630,71 @@ class ServerTransport(
             }
         }
     }
+    override suspend fun deleteMessage(messageId: Int, clientMessageId: String): TransportResult<Boolean> {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (_isConnected && webSocket != null) {
+                    // ✅ ОТПРАВЛЯЕМ ТОЛЬКО clientMessageId
+                    val envelope = WsEnvelope(
+                        type = "delete",
+                        payload = json.encodeToString(
+                            mapOf("clientMessageId" to clientMessageId)
+                        )
+                    )
+                    val sent = webSocket?.send(json.encodeToString(envelope)) == true
 
+                    if (sent) {
+                        TransportResult.Success(true)
+                    } else {
+                        TransportResult.Error("WS failed")
+                    }
+                } else {
+                    // Оффлайн - локальное удаление
+                    TransportResult.Success(true)
+                }
+            } catch (e: Exception) {
+                TransportResult.Error("Delete failed: ${e.message}", e)
+            }
+        }
+    }
+
+    // ✅ НОВЫЙ: Удаление чата через WS
+    override suspend fun deleteChat(user1: String, user2: String): TransportResult<Boolean> {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (_isConnected && webSocket != null) {
+                    // ✅ ТОЛЬКО chatWith (БЕЗ deletedBy)
+                    val envelope = WsEnvelope(
+                        type = "delete_chat",
+                        payload = json.encodeToString(
+                            mapOf("chatWith" to user2)
+                        )
+                    )
+                    val sent = webSocket?.send(json.encodeToString(envelope)) == true
+
+                    if (sent) {
+                        TransportResult.Success(true)
+                    } else {
+                        TransportResult.Error("WS failed")
+                    }
+                } else {
+                    // Оффлайн - локальное удаление
+                    Repository.deleteChat(user1, user2)
+                    TransportResult.Success(true)
+                }
+            } catch (e: Exception) {
+                TransportResult.Error("Delete chat failed: ${e.message}", e)
+            }
+        }
+    }
     override suspend fun sendMediaMessage(
         sender: String,
         receiver: String,
         text: String,
         type: String,
         mediaUrl: String,
-        duration: Int
+        duration: Int,
+        clientMessageId: String
     ): TransportResult<Int> {
         return withContext(Dispatchers.IO) {
             try {
@@ -589,20 +705,15 @@ class ServerTransport(
                         text = text,
                         type = type,
                         mediaUrl = mediaUrl,
-                        duration = duration
+                        duration = duration,
+                        clientMessageId = clientMessageId
                     )
-
                     val envelope = WsEnvelope(
                         type = "message",
                         payload = json.encodeToString(messageData)
                     )
-
                     val sent = webSocket?.send(json.encodeToString(envelope)) == true
-                    if (sent) {
-                        TransportResult.Success(1)
-                    } else {
-                        TransportResult.Error("WS send failed")
-                    }
+                    if (sent) TransportResult.Success(1) else TransportResult.Error("WS failed")
                 } else {
                     val body = json.encodeToString(
                         MessageDto(
@@ -611,12 +722,29 @@ class ServerTransport(
                             text = text,
                             type = type,
                             mediaUrl = mediaUrl,
-                            duration = duration
+                            duration = duration,
+                            clientMessageId = clientMessageId
                         )
                     )
                     val response = postRaw("/messages", body)
+
                     if (response != null) {
-                        TransportResult.Success(1)
+                        try {
+                            val msgDto = json.decodeFromString<MessageDto>(response)
+
+                            if (msgDto.clientMessageId.isNotBlank()) {
+                                Repository.confirmOwnMessage(
+                                    clientMessageId = msgDto.clientMessageId,
+                                    serverTimestamp = msgDto.timestamp,
+                                    serverId = msgDto.id
+                                )
+                            }
+
+                            TransportResult.Success(1)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to parse media response", e)
+                            TransportResult.Success(1)
+                        }
                     } else {
                         TransportResult.Error("HTTP send failed")
                     }

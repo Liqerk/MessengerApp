@@ -13,7 +13,8 @@ data class WsEnvelope(
 data class WsMessagePayload(
     val receiver: String,
     val text: String,
-    val replyToId: Int? = null
+    val replyToId: Int? = null,
+    val clientMessageId: String = ""
 )
 @Serializable
 data class WsTypingEvent(
@@ -27,7 +28,15 @@ data class WsReadEvent(
     val sender: String,
     val reader: String
 )
-
+@Serializable
+data class WsDeleteEvent(
+    val messageId: Int,
+    val clientMessageId: String = ""
+)
+@Serializable
+data class WsDeleteChatEvent(
+    val chatWith: String
+)
 @Serializable
 data class WsOnlineEvent(
     val login: String,

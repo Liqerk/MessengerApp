@@ -44,10 +44,20 @@ import java.util.*
 import kotlin.math.abs
 
 class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionListener {
+    companion object {
+        private const val REQUEST_CODE_CAMERA_PERMISSION = 200
+    }
     private var isLoadingMessages = false  // ✅ ДОБАВЛЕНО
     private var lastLoadedMessageId = -1
     private lateinit var currentUser: String
     private lateinit var chatWith: String
+    private var searchResults = mutableListOf<Int>()
+    private var currentSearchIndex = -1
+    private lateinit var searchPanel: LinearLayout
+    private lateinit var searchInput: EditText
+    private lateinit var searchCount: TextView
+    private lateinit var searchUpBtn: ImageButton
+    private lateinit var searchDownBtn: ImageButton
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: MessageRecyclerAdapter
     private lateinit var messageInput: EditText
@@ -111,10 +121,26 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
         AlertDialog.Builder(this)
             .setTitle("Удалить ${messages.size} сообщений?")
             .setPositiveButton("Удалить") { _, _ ->
-                messages.forEach { Repository.deleteMessage(it.id) }
-                adapter.exitSelectionMode()
-                loadMessages()
-                Toast.makeText(this, "Удалено: ${messages.size}", Toast.LENGTH_SHORT).show()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    for (msg in messages) {
+                        // 1. Удаляем локально
+                        Repository.deleteMessage(msg.id)
+
+                        // 2. Отправляем на сервер
+                        if (TransportManager.getMode() == TransportMode.SERVER) {
+                            val transport = TransportManager.get() as ServerTransport
+                            // ✅ Отправляем clientMessageId (не локальный id!)
+                            transport.deleteMessage(
+                                messageId = msg.id,  // сервер проигнорирует
+                                clientMessageId = msg.clientMessageId  // ← ВАЖНО!
+                            )
+                        }
+                    }
+                    withContext(Dispatchers.Main) {
+                        adapter.exitSelectionMode()
+                        loadMessages()
+                    }
+                }
             }
             .setNegativeButton("Отмена", null)
             .show()
@@ -267,7 +293,63 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
 
     private fun setupToolbar() {
         val backButton: ImageButton = findViewById(R.id.back_button)
+        // В initViews() или setupToolbar()
+        searchCount = findViewById(R.id.search_count)
+        searchPanel = findViewById(R.id.search_panel)
+        searchInput = findViewById(R.id.search_messages_input)
+        searchUpBtn = findViewById(R.id.search_up_btn)
+        searchDownBtn = findViewById(R.id.search_down_btn)
 
+        val searchBtn: ImageButton = findViewById(R.id.search_messages_btn)
+        val closeSearchBtn: ImageButton = findViewById(R.id.close_search_btn)
+
+
+
+// Открыть поиск
+        searchBtn.setOnClickListener {
+            searchPanel.visibility = View.VISIBLE
+            searchInput.requestFocus()
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.showSoftInput(searchInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        }
+
+// Закрыть поиск
+        closeSearchBtn.setOnClickListener {
+            searchPanel.visibility = View.GONE
+            searchInput.text.clear()
+            adapter.clearSearchHighlight()
+            searchResults.clear()
+            currentSearchIndex = -1
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.hideSoftInputFromWindow(searchInput.windowToken, 0)
+        }
+
+// Поиск при вводе текста
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                performSearch(s.toString().trim())
+            }
+        })
+
+// Стрелка ВВЕРХ
+        searchUpBtn.setOnClickListener {
+            if (searchResults.isNotEmpty()) {
+                currentSearchIndex = if (currentSearchIndex <= 0) searchResults.size - 1 else currentSearchIndex - 1
+                scrollToSearchResult(currentSearchIndex)
+                updateSearchCounter()
+            }
+        }
+
+// Стрелка ВНИЗ
+        searchDownBtn.setOnClickListener {
+            if (searchResults.isNotEmpty()) {
+                currentSearchIndex = if (currentSearchIndex >= searchResults.size - 1) 0 else currentSearchIndex + 1
+                scrollToSearchResult(currentSearchIndex)
+                updateSearchCounter()
+            }
+        }
         backButton.setOnClickListener {
             if (adapter.isInSelectionMode()) {
                 adapter.exitSelectionMode()
@@ -299,7 +381,67 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
             replyPanel.visibility = View.GONE
         }
     }
+    private fun performSearch(query: String) {
+        if (query.isEmpty()) {
+            adapter.clearSearchHighlight()
+            searchResults.clear()
+            searchCount.text = ""
+            return
+        }
 
+        val allMessages = Repository.getMessages(currentUser, chatWith)
+        val adapterItems = MessageRecyclerAdapter.buildItemList(allMessages)
+
+        searchResults.clear()
+
+        adapterItems.forEachIndexed { index, item ->
+            if (item is ChatListItem.MessageItem && item.message.text.contains(query, ignoreCase = true)) {
+                searchResults.add(index)  // ← теперь индекс в адаптере!
+            }
+        }
+
+        currentSearchIndex = if (searchResults.isNotEmpty()) 0 else -1
+        updateSearchCounter()
+
+        if (searchResults.isNotEmpty()) {
+            val item = adapterItems[searchResults[0]]
+            if (item is ChatListItem.MessageItem) {
+                adapter.setSearchHighlight(query, item.message.id)
+            }
+            recyclerView.scrollToPosition(searchResults[0])
+        }
+    }
+
+    private fun scrollToSearchResult(index: Int) {
+        if (index in searchResults.indices) {
+            val allMessages = Repository.getMessages(currentUser, chatWith)
+            val adapterItems = MessageRecyclerAdapter.buildItemList(allMessages)
+
+            val pos = searchResults[index]
+            val item = adapterItems[pos]
+            if (item is ChatListItem.MessageItem) {
+                adapter.setSearchHighlight(searchInput.text.toString().trim(), item.message.id)
+            }
+            recyclerView.scrollToPosition(pos)
+        }
+    }
+
+    // Обновить счётчик
+    private fun updateSearchCounter() {
+        if (searchResults.isEmpty()) {
+            searchCount.text = "0/0"
+        } else {
+            searchCount.text = "${currentSearchIndex + 1}/${searchResults.size}"
+        }
+    }
+    private fun showImagePickerDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Добавить фото")
+            .setItems(arrayOf("Камера", "Галерея")) { _, w ->
+                if (w == 0) dispatchTakePictureIntent() else pickImageFromGallery()
+            }
+            .show()
+    }
     private fun setupInputPanel() {
         // Переключение кнопок send/voice
         messageInput.addTextChangedListener(object : TextWatcher {
@@ -332,28 +474,27 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
             replyPanel.visibility = View.GONE
             sendTypingStatus(false)
 
-            // Запускаем в фоновом потоке
+            // ✅ Генерируем clientMessageId
+            val clientId = java.util.UUID.randomUUID().toString()
+
             lifecycleScope.launch(Dispatchers.IO) {
-                // 1. БЕЗУСЛОВНО СОХРАНЯЕМ В ЛОКАЛЬНУЮ БАЗУ (как неотправленное)
+                // 1. Сохраняем локально с clientMessageId
                 val msgId = if (reply != null) {
-                    Repository.sendReplyMessage(currentUser, chatWith, text, reply, isSent = false)
+                    Repository.sendReplyMessage(currentUser, chatWith, text, reply, isSent = false, clientMessageId = clientId)
                 } else {
-                    Repository.sendMessage(currentUser, chatWith, text, isSent = false)
+                    Repository.sendMessage(currentUser, chatWith, text, isSent = false, clientMessageId = clientId)
                 }
 
-                // 2. МГНОВЕННО ОБНОВЛЯЕМ ЧАТ (появится сообщение с 🔄)
                 withContext(Dispatchers.Main) { loadMessages() }
 
-                // 3. ПЫТАЕМСЯ ОТПРАВИТЬ ЧЕРЕЗ ИНТЕРНЕТ
+                // 2. Отправляем на сервер
                 if (TransportManager.getMode() == TransportMode.SERVER) {
-                    val success = SyncManager.sendMessage(currentUser, chatWith, text)
+                    val success = SyncManager.sendMessage(currentUser, chatWith, text, clientId)
                     if (success) {
-                        // Если интернет есть и сервер принял - помечаем как отправленное
                         Repository.markMessageAsSent(msgId)
-                        withContext(Dispatchers.Main) { loadMessages() } // 🔄 сменится на ✓
+
                     }
                 } else {
-                    // Если мы в Локальном режиме - авто-успех
                     Repository.markMessageAsSent(msgId)
                     withContext(Dispatchers.Main) { loadMessages() }
                 }
@@ -411,64 +552,8 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
     // WebSocket Callbacks
     // ==========================================
 
-    private fun setupWebSocketCallbacks() {
-        val transport = TransportManager.get()
 
-        // Входящие сообщения
-        transport.onMessageReceived { message ->
-            Log.e("ChatActivity", "🚨📩 WS message received: sender=${message.sender}, receiver=${message.receiver}, text=${message.text}")
-            Log.e("ChatActivity", "🚨 Current chat: $chatWith, current user: $currentUser")
 
-            if ((message.sender == chatWith && message.receiver == currentUser) ||
-                (message.sender == currentUser && message.receiver == chatWith)) {
-
-                // ✅ Transport уже сохранил сообщение в БД.
-                // Просто обновляем UI.
-                lifecycleScope.launch(Dispatchers.Main) {
-                    Log.e("ChatActivity", "🚨🔄 Calling loadMessages() after WS")
-
-                    loadMessages()
-
-                    if (message.sender == chatWith) {
-                        markMessagesAsRead()
-                    }
-
-                }
-            }
-        }
-
-        // Typing индикатор
-        if (transport is ServerTransport) {
-            transport.onTypingReceived { sender, isTyping ->
-                if (sender == chatWith) {
-                    runOnUiThread {
-                        statusText.text = if (isTyping) "печатает..." else getOnlineStatus()
-                    }
-                }
-            }
-
-            // Read статус
-            transport.onReadReceived { reader ->
-                if (reader == chatWith) {
-                    lifecycleScope.launch {
-                        delay(200)
-                        withContext(Dispatchers.Main) {
-                            loadMessages()
-                        }
-                    }
-                }
-            }
-
-            // Online статус
-            transport.onOnlineStatusReceived { login, isOnline ->
-                if (login == chatWith) {
-                    runOnUiThread {
-                        updateChatStatus(isOnline)
-                    }
-                }
-            }
-        }
-    }
     private fun sendTypingStatus(isTyping: Boolean) {
         if (TransportManager.getMode() != TransportMode.SERVER) return
 
@@ -775,11 +860,31 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
     // Фото
     // ==========================================
 
-    private fun showImagePickerDialog() {
-        AlertDialog.Builder(this).setTitle("Добавить фото")
-            .setItems(arrayOf("Камера", "Галерея")) { _, w ->
-                if (w == 0) dispatchTakePictureIntent() else pickImageFromGallery()
-            }.show()
+    private fun dispatchTakePictureIntent() {
+        // ✅ Проверяем разрешение камеры
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(android.Manifest.permission.CAMERA),
+                REQUEST_CODE_CAMERA_PERMISSION  // ← добавь константу
+            )
+            return
+        }
+
+        Intent(MediaStore.ACTION_IMAGE_CAPTURE).also { i ->
+            i.resolveActivity(packageManager)?.also {
+                createImageFile()?.also { f ->
+                    currentPhotoPath = f.absolutePath
+                    i.putExtra(MediaStore.EXTRA_OUTPUT, FileProvider.getUriForFile(
+                        this,
+                        "${packageName}.fileprovider",
+                        f
+                    ))
+                    startActivityForResult(i, REQUEST_CODE_CAMERA)
+                }
+            }
+        }
     }
 
     private fun pickImageFromGallery() {
@@ -789,17 +894,6 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
         )
     }
 
-    private fun dispatchTakePictureIntent() {
-        Intent(MediaStore.ACTION_IMAGE_CAPTURE).also { i ->
-            i.resolveActivity(packageManager)?.also {
-                createImageFile()?.also { f ->
-                    currentPhotoPath = f.absolutePath
-                    i.putExtra(MediaStore.EXTRA_OUTPUT, FileProvider.getUriForFile(this, "${packageName}.fileprovider", f))
-                    startActivityForResult(i, REQUEST_CODE_CAMERA)
-                }
-            }
-        }
-    }
 
     private fun createImageFile(): File? {
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
@@ -860,17 +954,9 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        markMessagesAsRead()
-        loadMessages()
 
-    }
 
-    override fun onPause() {
-        super.onPause()
-        sendTypingStatus(false)
-    }
+
 
     override fun onDestroy() {
         super.onDestroy()
@@ -878,6 +964,7 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
         mediaRecorder?.release()
         mediaRecorder = null
         typingJob?.cancel()
+
     }
 
     override fun onRetryMessage(message: Message) {
@@ -887,15 +974,27 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
             var success = false
 
             if (message.type == "text") {
-                success = SyncManager.sendMessage(message.sender, message.receiver, message.text)
+                success = SyncManager.sendMessage(
+                    sender = message.sender,
+                    receiver = message.receiver,
+                    text = message.text,
+                    clientMessageId = message.clientMessageId
+                )
             } else {
-                // Если это фото или аудио, загружаем локальный файл на сервер Ktor
                 val localFile = File(message.mediaUrl ?: "")
                 if (localFile.exists()) {
                     val uploadResult = TransportManager.get().uploadFile(localFile)
                     if (uploadResult is TransportResult.Success) {
                         val serverUrl = uploadResult.data
-                        success = SyncManager.sendMediaMessage(message.sender, message.receiver, message.text, message.type, serverUrl, message.duration)
+                        success = SyncManager.sendMediaMessage(
+                            sender = message.sender,
+                            receiver = message.receiver,
+                            text = message.text,
+                            type = message.type,
+                            mediaUrl = serverUrl,
+                            duration = message.duration,
+                            clientMessageId = message.clientMessageId
+                        )
                     }
                 }
             }
@@ -903,7 +1002,9 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
             withContext(Dispatchers.Main) {
                 if (success) {
                     Repository.markMessageAsSent(message.id)
-                    loadMessages() // 🔄 исчезнет
+                    // ✅ НЕ ВЫЗЫВАЕМ loadMessages() — WebSocket сам обновит
+                    Toast.makeText(this@ChatActivity, "✅ Отправлено", Toast.LENGTH_SHORT).show()
+                    withContext(Dispatchers.Main) { loadMessages() }
                 } else {
                     Toast.makeText(this@ChatActivity, "Всё ещё нет сети :(", Toast.LENGTH_SHORT).show()
                 }
@@ -914,38 +1015,40 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
     private fun sendMediaMessageToServer(path: String, type: String, duration: Int = 0) {
         lifecycleScope.launch(Dispatchers.IO) {
             val text = if (type == "image") "📷 Фото" else "🎤 Голосовое"
+            val clientId = java.util.UUID.randomUUID().toString() // ✅
 
-            // 1. Мгновенно сохраняем локально (с часиками 🔄)
+            // 1. Мгновенно сохраняем локально с clientMessageId
             val msgId = if (type == "image") {
-                Repository.sendImageMessage(currentUser, chatWith, path, isSent = false)
+                Repository.sendImageMessage(currentUser, chatWith, path, isSent = false, clientMessageId = clientId)
             } else {
-                Repository.sendAudioMessage(currentUser, chatWith, path, duration, isSent = false)
+                Repository.sendAudioMessage(currentUser, chatWith, path, duration, isSent = false, clientMessageId = clientId)
             }
             withContext(Dispatchers.Main) { loadMessages() }
 
             // 2. Пытаемся отправить
             if (TransportManager.getMode() == TransportMode.SERVER) {
                 try {
-                    // ✅ Шаг 1: Загружаем файл по HTTP (не зависит от WebSocket!)
                     val uploadResult = TransportManager.get().uploadFile(File(path))
 
                     if (uploadResult is TransportResult.Success) {
                         val serverUrl = uploadResult.data
 
-                        // ✅ Шаг 2: Отправляем сообщение (WS или HTTP fallback)
                         val sent = if (TransportManager.get().isConnected()) {
-                            // Через WebSocket
-                            SyncManager.sendMediaMessage(currentUser, chatWith, text, type, serverUrl, duration)
+                            // ✅ Передаём clientId
+                            SyncManager.sendMediaMessage(
+                                currentUser, chatWith, text, type, serverUrl, duration, clientId
+                            )
                         } else {
-                            // ✅ FALLBACK: Через HTTP POST
-                            sendMediaViaHttp(currentUser, chatWith, text, type, serverUrl, duration)
+                            // ✅ Fallback с clientId
+                            sendMediaViaHttp(
+                                currentUser, chatWith, text, type, serverUrl, duration, clientId
+                            )
                         }
 
                         if (sent) {
                             Repository.markMessageAsSent(msgId)
                             withContext(Dispatchers.Main) { loadMessages() }
                         } else {
-                            // Сохраняем в очередь для повторной отправки
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(this@ChatActivity, "Файл загружен, но сообщение не отправлено", Toast.LENGTH_SHORT).show()
                             }
@@ -967,21 +1070,24 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
         }
     }
 
-    // ✅ HTTP fallback для отправки медиа-сообщений когда WebSocket не подключен
     private suspend fun sendMediaViaHttp(
         sender: String, receiver: String, text: String,
-        type: String, mediaUrl: String, duration: Int
+        type: String, mediaUrl: String, duration: Int, clientMessageId: String // ✅
     ): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 val transport = TransportManager.get()
-                val result = transport.sendMediaMessage(sender, receiver, text, type, mediaUrl, duration)
+                val result = transport.sendMediaMessage(
+                    sender, receiver, text, type, mediaUrl, duration, clientMessageId
+                )
                 result is TransportResult.Success
             } catch (e: Exception) {
                 false
             }
         }
     }
+
+
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
@@ -990,5 +1096,94 @@ class ChatActivity : AppCompatActivity(), MessageRecyclerAdapter.MessageActionLi
         } else {
             super.onBackPressed()
         }
+    }
+    // Поле класса:
+    private val wsListener: (Message) -> Unit = { message ->
+        if ((message.sender == chatWith && message.receiver == currentUser) ||
+            (message.sender == currentUser && message.receiver == chatWith)) {
+
+            lifecycleScope.launch(Dispatchers.Main) {
+                Log.e("ChatActivity", "🚨🔄 WS → loadMessages()")
+                loadMessages()
+                if (message.sender == chatWith) {
+                    markMessagesAsRead()
+                }
+            }
+        }
+    }
+
+    // В setupWebSocketCallbacks() заменить регистрацию:
+    private fun setupWebSocketCallbacks() {
+        val transport = TransportManager.get()
+        transport.onMessageReceived(wsListener)
+
+        if (transport is ServerTransport) {
+            transport.onTypingReceived { sender, isTyping ->
+                if (sender == chatWith) {
+                    runOnUiThread {
+                        statusText.text = if (isTyping) "печатает..." else getOnlineStatus()
+                    }
+                }
+            }
+
+            transport.onReadReceived { reader ->
+                if (reader == chatWith) {
+                    lifecycleScope.launch {
+                        delay(200)
+                        withContext(Dispatchers.Main) { loadMessages() }
+                    }
+                }
+            }
+
+            transport.onOnlineStatusReceived { login, isOnline ->
+                if (login == chatWith) {
+                    runOnUiThread {
+                        val newStatus = if (isOnline) "🟢 в сети" else "не в сети"
+                        statusText.text = newStatus
+                    }
+                }
+            }
+
+            // ✅ НОВОЕ: Обработка удаления от сервера
+            transport.onDeleteMessageReceived { messageId ->
+                Log.d("ChatActivity", "🗑️ Server deleted: $messageId")
+                Repository.deleteMessageByClientId(messageId)
+                loadMessages()
+            }
+
+            // ✅ НОВОЕ: Обработка удаления чата от сервера
+            transport.onDeleteChatReceived { chatWithName ->
+                if (chatWithName == chatWith) {
+                    Log.d("ChatActivity", "🗑️ Chat deleted by $chatWithName")
+                    Repository.deleteChat(currentUser, chatWith)
+                    runOnUiThread {
+                        Toast.makeText(this, "Чат удалён", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        markMessagesAsRead()
+        loadMessages()
+        val transport = TransportManager.get() as? ServerTransport
+        if (transport?.isConnected() == true) {
+            // WebSocket работает — статус уже актуальный
+            // onOnlineStatusReceived уже обновил statusText
+        } else {
+            statusText.text = "не в сети"
+        }
+        // ✅ Переподключаем при возврате
+
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sendTypingStatus(false)
+        // ✅ Снимаем при уходе
+        TransportManager.get().removeMessageCallback(wsListener)
     }
 }

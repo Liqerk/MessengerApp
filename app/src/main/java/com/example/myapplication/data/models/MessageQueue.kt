@@ -5,6 +5,7 @@ import com.example.myapplication.transport.TransportManager
 import com.example.myapplication.transport.TransportMode
 import com.example.myapplication.transport.TransportResult
 import kotlinx.coroutines.*
+import java.util.UUID
 
 object MessageQueue {
 
@@ -19,13 +20,25 @@ object MessageQueue {
         val receiver: String,
         val text: String,
         val type: String = "text",
-        val mediaUrl: String? = null
+        val mediaUrl: String? = null,
+        val duration: Int = 0,
+        val clientMessageId: String // ✅ ДОБАВЛЕНО
     )
 
     var onMessageSent: ((messageId: Int) -> Unit)? = null
     var onMessageFailed: ((messageId: Int) -> Unit)? = null
 
-    fun enqueue(messageId: Int, sender: String, receiver: String, text: String, type: String = "text", mediaUrl: String? = null) {
+    // ✅ enqueue теперь принимает clientMessageId
+    fun enqueue(
+        messageId: Int,
+        sender: String,
+        receiver: String,
+        text: String,
+        type: String = "text",
+        mediaUrl: String? = null,
+        duration: Int = 0,
+        clientMessageId: String
+    ) {
         synchronized(pendingMessages) {
             if (pendingMessages.none { it.messageId == messageId }) {
                 pendingMessages.add(
@@ -35,12 +48,14 @@ object MessageQueue {
                         receiver = receiver,
                         text = text,
                         type = type,
-                        mediaUrl = mediaUrl
+                        mediaUrl = mediaUrl,
+                        duration = duration,
+                        clientMessageId = clientMessageId
                     )
                 )
+                Log.d(TAG, "📤 Message $messageId queued with CID=$clientMessageId")
             }
         }
-        Log.d(TAG, "📤 Message $messageId queued")
     }
 
     fun processPending() {
@@ -48,6 +63,8 @@ object MessageQueue {
             Log.d(TAG, "⏸️ Not in SERVER mode")
             return
         }
+
+
 
         scope.launch {
             val toSend = synchronized(pendingMessages) { pendingMessages.toList() }
@@ -61,11 +78,26 @@ object MessageQueue {
 
             for (msg in toSend) {
                 try {
-                    val result = TransportManager.get().sendMessage(
-                        sender = msg.sender,
-                        receiver = msg.receiver,
-                        text = msg.text
-                    )
+                    val result = if (msg.type == "text") {
+                        // ✅ Передаём clientMessageId!
+                        TransportManager.get().sendMessage(
+                            sender = msg.sender,
+                            receiver = msg.receiver,
+                            text = msg.text,
+                            clientMessageId = msg.clientMessageId
+                        )
+                    } else {
+                        // ✅ Обрабатываем медиа с clientMessageId
+                        TransportManager.get().sendMediaMessage(
+                            sender = msg.sender,
+                            receiver = msg.receiver,
+                            text = msg.text,
+                            type = msg.type,
+                            mediaUrl = msg.mediaUrl ?: "",
+                            duration = msg.duration,
+                            clientMessageId = msg.clientMessageId
+                        )
+                    }
 
                     when (result) {
                         is TransportResult.Success -> {
@@ -74,7 +106,7 @@ object MessageQueue {
                                 pendingMessages.removeAll { it.messageId == msg.messageId }
                             }
                             onMessageSent?.invoke(msg.messageId)
-                            Log.d(TAG, "✅ Sent ${msg.messageId}")
+                            Log.d(TAG, "✅ Sent ${msg.messageId} (CID=${msg.clientMessageId})")
                         }
 
                         is TransportResult.Error -> {
@@ -83,7 +115,7 @@ object MessageQueue {
                         }
                     }
 
-                    delay(200)
+                    delay(100) // Небольшая задержка между сообщениями
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Error sending ${msg.messageId}", e)
                     onMessageFailed?.invoke(msg.messageId)
@@ -99,6 +131,15 @@ object MessageQueue {
             synchronized(pendingMessages) {
                 pendingMessages.clear()
                 unsent.forEach { msg ->
+                    // ✅ Берём clientMessageId из БД
+                    val clientId = msg.clientMessageId.ifBlank {
+                        // Fallback: если в старой БД нет ID, генерируем и обновляем
+                        val newId = UUID.randomUUID().toString()
+                        Log.w(TAG, "⚠️ Message ${msg.id} has no clientMessageId, generating: $newId")
+                        // TODO: Добавить в Repository метод updateClientMessageId
+                        newId
+                    }
+
                     pendingMessages.add(
                         PendingMessage(
                             messageId = msg.id,
@@ -106,7 +147,9 @@ object MessageQueue {
                             receiver = msg.receiver,
                             text = msg.text,
                             type = msg.type,
-                            mediaUrl = msg.mediaUrl
+                            mediaUrl = msg.mediaUrl,
+                            duration = msg.duration,
+                            clientMessageId = clientId
                         )
                     )
                 }
@@ -114,9 +157,17 @@ object MessageQueue {
 
             if (unsent.isNotEmpty()) {
                 Log.d(TAG, "📦 Loaded ${unsent.size} unsent messages")
+                // ✅ Сразу пробуем отправить
+                processPending()
             }
         }
     }
 
     fun getPendingCount(): Int = synchronized(pendingMessages) { pendingMessages.size }
+
+    // ✅ Вызывать при успешном подключении WS
+    fun onConnected() {
+        Log.d(TAG, "🔌 Connected, processing pending...")
+        processPending()
+    }
 }

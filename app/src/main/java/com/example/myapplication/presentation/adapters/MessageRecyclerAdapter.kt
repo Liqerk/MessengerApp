@@ -27,6 +27,8 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import com.example.myapplication.User
+import java.util.TimeZone
+
 class MessageRecyclerAdapter(
     private var items: List<ChatListItem>,
     private val currentUser: String,
@@ -309,7 +311,20 @@ class MessageRecyclerAdapter(
         }
     }
 
-    private fun formatTime(ts: String) = if (ts.length >= 16) ts.substring(11, 16) else ts
+    private fun formatTime(ts: String): String {
+        return try {
+            // ts = "2026-04-20 15:30:00.123" (UTC)
+            val utcFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+            utcFormat.timeZone = TimeZone.getTimeZone("UTC")
+            val date = utcFormat.parse(ts.substringBefore("."))  // без миллисекунд
+
+            val localFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+            localFormat.timeZone = TimeZone.getDefault()
+            localFormat.format(date)
+        } catch (e: Exception) {
+            ts.substring(11, 16)  // fallback
+        }
+    }
 
     private fun applyBubbleStyle(
         bubble: View,
@@ -351,6 +366,14 @@ class MessageRecyclerAdapter(
                     readStatus.setTextColor(ctx.getColor(R.color.text_time_sent))
                 }
             }
+        }else {
+            // ✅ ДОБАВЬ ЭТО!
+            p.gravity = Gravity.START
+            p.marginStart = 0
+            p.marginEnd = 60
+            bubble.setBackgroundResource(R.drawable.bubble_received)  // ← ВАЖНО!
+            time.setTextColor(ctx.getColor(R.color.text_time_received))
+            readStatus.visibility = View.GONE  // чужие сообщения без статуса
         }
 
         bubble.layoutParams = p

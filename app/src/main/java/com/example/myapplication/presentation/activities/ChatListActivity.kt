@@ -19,18 +19,17 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
-import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.example.myapplication.transport.ServerTransport
 import com.example.myapplication.transport.TransportManager
 import com.example.myapplication.transport.TransportMode
 import com.example.myapplication.transport.TransportResult
 import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.snackbar.Snackbar
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class ChatListActivity : AppCompatActivity() {
 
@@ -53,20 +52,16 @@ class ChatListActivity : AppCompatActivity() {
         currentUser = session.getLogin() ?: ""
         val token = session.getToken() ?: ""
 
-        Log.e("ChatListActivity", "🚨🚨🚨 ChatListActivity START")
-        Log.e("ChatListActivity", "🚨 login: $currentUser, token: ${token.take(20)}...")
+        Log.d("ChatListActivity", "ChatListActivity START | login: $currentUser")
 
-        // ✅ ВАЖНО: Подключаем WebSocket при старте!
         if (token.isNotEmpty() && TransportManager.getMode() == TransportMode.SERVER) {
             val transport = TransportManager.get()
             if (transport is ServerTransport) {
                 transport.setToken(token, currentUser)
-
-                // ✅ ПРИНУДИТЕЛЬНОЕ ПОДКЛЮЧЕНИЕ
-                Log.e("ChatListActivity", "🚨 Force connecting WebSocket...")
                 transport.connect()
             }
         }
+
         if (currentUser.isEmpty()) {
             startActivity(Intent(this, AuthActivity::class.java))
             finish()
@@ -86,32 +81,30 @@ class ChatListActivity : AppCompatActivity() {
         setupSearch()
         setupThemeButton()
         setupLogoutButton()
+
+        // ✅ Подписываемся на WebSocket один раз при создании активности
+        setupWebSocketListener()
     }
 
-    override fun onResume() {
-        super.onResume()
-        loadChats()
-        updateConnectionStatus()
-        setupMyAvatar()
-        appBarLayout.post { appBarLayout.setExpanded(false, false) }
+    // ==================== WEBSOCKET ====================
 
-        // --- НОВОЕ: Обработка события подключения и отправки ---
-        TransportManager.onNetworkEvent = { event ->
-            runOnUiThread {
-                when (event) {
-                    is TransportManager.NetworkEvent.PendingMessagesAvailable -> {
-                        // Показываем сообщение внизу экрана (Snackbar)
-                        Snackbar.make(recyclerView, "Найдено ${event.count} неотправленных сообщений. Отправить?", Snackbar.LENGTH_INDEFINITE)
-                            .setAction("ОТПРАВИТЬ") {
-                                MessageQueue.processPending()
-                            }
-                            .show()
+    private fun setupWebSocketListener() {
+        TransportManager.get().onMessageReceived { message ->
+            // Обновляем список если сообщение касается текущего пользователя
+            if (message.receiver == currentUser || message.sender == currentUser) {
+                Log.d("ChatListActivity", "📩 WS message received, refreshing chat list")
+                runOnUiThread {
+                    if (!isInSearchMode) {
+                        loadChats()
                     }
-                    else -> { }
                 }
             }
         }
     }
+
+    // ==================== LIFECYCLE ====================
+
+
 
     // ==================== UI INIT ====================
 
@@ -127,21 +120,13 @@ class ChatListActivity : AppCompatActivity() {
             if (isHttp) {
                 myAvatarImage.visibility = View.VISIBLE
                 myAvatarText.visibility = View.GONE
-
-                Glide.with(this)
-                    .load(avatarPath)
-                    .circleCrop()
-                    .into(myAvatarImage)
+                Glide.with(this).load(avatarPath).circleCrop().into(myAvatarImage)
             } else {
                 val localFile = File(avatarPath)
                 if (localFile.exists()) {
                     myAvatarImage.visibility = View.VISIBLE
                     myAvatarText.visibility = View.GONE
-
-                    Glide.with(this)
-                        .load(localFile)
-                        .circleCrop()
-                        .into(myAvatarImage)
+                    Glide.with(this).load(localFile).circleCrop().into(myAvatarImage)
                 } else {
                     showMyAvatarLetter(myAvatarText, myAvatarImage)
                 }
@@ -155,8 +140,6 @@ class ChatListActivity : AppCompatActivity() {
             startActivity(Intent(this, ProfileActivity::class.java))
         }
     }
-
-
 
     private fun showMyAvatarLetter(text: TextView, image: ImageView) {
         image.visibility = View.GONE
@@ -180,9 +163,7 @@ class ChatListActivity : AppCompatActivity() {
     }
 
     private fun setupAppBar() {
-        appBarLayout.post {
-            appBarLayout.setExpanded(false, false)
-        }
+        appBarLayout.post { appBarLayout.setExpanded(false, false) }
 
         appBarLayout.addOnOffsetChangedListener(
             AppBarLayout.OnOffsetChangedListener { _, verticalOffset ->
@@ -216,11 +197,7 @@ class ChatListActivity : AppCompatActivity() {
 
                 if (query.startsWith("@")) {
                     val userQuery = query.removePrefix("@").trim()
-                    if (userQuery.isNotEmpty()) {
-                        searchUsers(userQuery)
-                    } else {
-                        loadChats()
-                    }
+                    if (userQuery.isNotEmpty()) searchUsers(userQuery) else loadChats()
                 } else {
                     searchChatsAndMessages(query)
                 }
@@ -302,7 +279,7 @@ class ChatListActivity : AppCompatActivity() {
                     }
 
                     is TransportResult.Error -> {
-                        android.util.Log.e("SEARCH_USERS", "server error = ${result.message}")
+                        Log.e("SEARCH_USERS", "server error = ${result.message}")
                     }
                 }
             }
@@ -330,22 +307,8 @@ class ChatListActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val allChats = Repository.getChatList(currentUser)
 
-            // 1. Поиск по имени чата / собеседника
-            val chatsByName = allChats.filter {
-                it.name.contains(query, ignoreCase = true)
-            }.sortedWith(
-                compareByDescending<ChatItem> { it.isPinned }
-                    .thenByDescending { it.lastMessageTime }
-            )
-
-            // 2. Поиск по тексту последнего сообщения в чате
-            val chatsByLastMessage = allChats.filter {
-                it.lastMessage.contains(query, ignoreCase = true)
-            }.sortedWith(
-                compareByDescending<ChatItem> { it.isPinned }
-                    .thenByDescending { it.lastMessageTime }
-            )
-
+            val chatsByName = allChats.filter { it.name.contains(query, ignoreCase = true) }
+            val chatsByLastMessage = allChats.filter { it.lastMessage.contains(query, ignoreCase = true) }
             val mergedByChats = (chatsByName + chatsByLastMessage).distinctBy { it.name }
 
             if (mergedByChats.isNotEmpty()) {
@@ -354,7 +317,6 @@ class ChatListActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // 3. Если по чатам не нашли — ищем по всем сообщениям
             val results = Repository.searchGlobalMessages(currentUser, query)
 
             if (results.isEmpty()) {
@@ -385,11 +347,6 @@ class ChatListActivity : AppCompatActivity() {
         }
     }
 
-    // Оставляю старый метод, чтобы ничего не ломать, но теперь он просто вызывает улучшенный поиск
-    private fun searchMessages(query: String) {
-        searchChatsAndMessages(query)
-    }
-
     // ==================== ЗАГРУЗКА ЧАТОВ ====================
 
     private fun loadChats() {
@@ -417,10 +374,9 @@ class ChatListActivity : AppCompatActivity() {
 
     private fun updateConnectionStatus() {
         if (::connectionStatus.isInitialized) {
-            val mode = TransportManager.getMode()
-            connectionStatus.text = when (mode) {
+            connectionStatus.text = when (TransportManager.getMode()) {
                 TransportMode.LOCAL -> "📱 Локально"
-                TransportMode.SERVER -> "🌐 Онлайн"
+                TransportMode.SERVER-> "🌐 Онлайн"
                 TransportMode.BRIAR -> "🔒 Briar"
             }
         }
@@ -451,9 +407,24 @@ class ChatListActivity : AppCompatActivity() {
                             .setTitle("Удалить чат?")
                             .setMessage("Все сообщения с ${chatItem.name} будут удалены")
                             .setPositiveButton("Удалить") { _, _ ->
-                                Repository.deleteChat(currentUser, chatItem.name)
-                                loadChats()
-                                Toast.makeText(this, "Чат удалён", Toast.LENGTH_SHORT).show()
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    // 1. Удаляем локально
+                                    Repository.deleteChat(currentUser, chatItem.name)
+
+                                    // 2. Отправляем на сервер
+                                    if (TransportManager.getMode() == TransportMode.SERVER) {
+                                        TransportManager.get().deleteChat(currentUser, chatItem.name)
+                                    }
+
+                                    withContext(Dispatchers.Main) {
+                                        loadChats()
+                                        Toast.makeText(
+                                            this@ChatListActivity,
+                                            "Чат удалён",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
                             }
                             .setNegativeButton("Отмена", null)
                             .show()
@@ -475,5 +446,70 @@ class ChatListActivity : AppCompatActivity() {
             recyclerView.visibility = View.VISIBLE
         }
     }
+    private val wsListener: (Message) -> Unit = { message ->
+        if (message.receiver == currentUser || message.sender == currentUser) {
+            Log.d("ChatListActivity", "📩 WS → refreshing chat list")
+            runOnUiThread {
+                if (!isInSearchMode) {
+                    loadChats()
+                }
+            }
+        }
+    }
 
+    override fun onResume() {
+        super.onResume()
+        loadChats()
+        updateConnectionStatus()
+        setupMyAvatar()
+        appBarLayout.post { appBarLayout.setExpanded(false, false) }
+
+        TransportManager.get().onMessageReceived(wsListener)
+
+        // ✅ НОВОЕ: Обработка удаления чата от сервера
+        val transport = TransportManager.get()
+        if (transport is ServerTransport) {
+            transport.onDeleteMessageReceived { clientMessageId ->
+                Log.d("ChatListActivity", "🗑️ Message deleted: $clientMessageId")
+
+                // ✅ Удаляем по clientMessageId
+                Repository.deleteMessageByClientId(clientMessageId)
+
+                runOnUiThread { loadChats() }
+            }
+
+            transport.onDeleteMessageReceived { messageId ->
+                Log.d("ChatListActivity", "🗑️ Message deleted: $messageId")
+
+                // ✅ Конвертируем String в Int
+                val id = messageId.toIntOrNull() ?: return@onDeleteMessageReceived
+                Repository.deleteMessage(id)
+
+                runOnUiThread { loadChats() }
+            }
+        }
+
+        TransportManager.onNetworkEvent = { event ->
+            runOnUiThread {
+                when (event) {
+                    is TransportManager.NetworkEvent.PendingMessagesAvailable -> {
+                        Snackbar.make(
+                            recyclerView,
+                            "Найдено ${event.count} неотправленных сообщений. Отправить?",
+                            Snackbar.LENGTH_INDEFINITE
+                        ).setAction("ОТПРАВИТЬ") {
+                            MessageQueue.processPending()
+                        }.show()
+                    }
+                    else -> {}
+                }
+            }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // ✅ Снимаем при уходе с экрана (чтобы не дублировать с ChatActivity)
+        TransportManager.get().removeMessageCallback(wsListener)
+    }
 }

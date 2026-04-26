@@ -63,6 +63,7 @@ data class UserDto(
 @Serializable
 data class MessageDto(
     val id: Int = 0,
+    val clientMessageId: String = "",
     val sender: String,
     val receiver: String,
     val text: String,
@@ -93,6 +94,7 @@ data class ChatItemDto(
 
 fun MessageDto.toDomain() = Message(
     id = id,
+    clientMessageId = clientMessageId,
     sender = sender,
     receiver = receiver,
     text = text,
@@ -121,6 +123,7 @@ private fun normalizeTimestamp(isoTimestamp: String): String {
 
 fun Message.toDto() = MessageDto(
     id = id,
+    clientMessageId = clientMessageId,
     sender = sender,
     receiver = receiver,
     text = text,

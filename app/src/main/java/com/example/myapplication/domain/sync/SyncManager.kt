@@ -13,9 +13,10 @@ object SyncManager {
 
     suspend fun sendMediaMessage(
         sender: String, receiver: String, text: String,
-        type: String, mediaUrl: String, duration: Int
+        type: String, mediaUrl: String, duration: Int,
+        clientMessageId: String = ""
     ): Boolean {
-        val result = TransportManager.get().sendMediaMessage(sender, receiver, text, type, mediaUrl, duration)
+        val result = TransportManager.get().sendMediaMessage(sender, receiver, text, type, mediaUrl, duration,clientMessageId)
         return result is TransportResult.Success
     }
 
@@ -56,7 +57,6 @@ object SyncManager {
         }
     }
 
-    // ✅ ИСПРАВЛЕНО: проверка дубликатов по серверному ключу
     private suspend fun syncMessages(currentUser: String, otherUser: String) {
         val result = TransportManager.get().getMessages(currentUser, otherUser)
         when (result) {
@@ -68,7 +68,13 @@ object SyncManager {
                 var skippedCount = 0
 
                 for (msg in serverMessages) {
-                    // ✅ Проверяем ПО СЕРВЕРНОМУ timestamp
+                    // ✅ Проверка по clientMessageId (приоритет)
+                    if (msg.clientMessageId.isNotBlank() && Repository.messageExistsByClientId(msg.clientMessageId)) {
+                        skippedCount++
+                        continue
+                    }
+
+                    // ✅ Проверка по timestamp (fallback)
                     val exists = Repository.messageExists(
                         msg.sender, msg.receiver, msg.text, msg.timestamp
                     )
@@ -81,12 +87,12 @@ object SyncManager {
                     Repository.ensureUserExists(msg.sender)
                     Repository.ensureUserExists(msg.receiver)
 
-                    // ✅ Сохраняем С СЕРВЕРНЫМ timestamp (а не генерируем локально)
                     val msgId = Repository.syncMessage(
                         sender = msg.sender,
                         receiver = msg.receiver,
                         text = msg.text,
-                        timestamp = msg.timestamp
+                        timestamp = msg.timestamp,
+                        clientMessageId = msg.clientMessageId
                     )
 
                     if (msgId > 0) {
@@ -122,8 +128,9 @@ object SyncManager {
             localResults
         }
 
-    suspend fun sendMessage(sender: String, receiver: String, text: String): Boolean {
-        val result = TransportManager.get().sendMessage(sender, receiver, text)
+    // ✅ sendMessage с clientMessageId
+    suspend fun sendMessage(sender: String, receiver: String, text: String, clientMessageId: String = ""): Boolean {
+        val result = TransportManager.get().sendMessage(sender, receiver, text, clientMessageId)
         return result is TransportResult.Success
     }
 }

@@ -3,6 +3,7 @@ package com.example.myapplication
 data class Message(
     val id: Int = 0,
     val sender: String,
+    val clientMessageId: String = "",
     val receiver: String,
     val text: String,
     val timestamp: String = "",

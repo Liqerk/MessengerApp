@@ -9,6 +9,10 @@ import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 
 class ChatRecyclerAdapter(
@@ -80,7 +84,8 @@ class ChatRecyclerAdapter(
 
         if (item.lastMessageTime.isNotEmpty() && item.lastMessageTime.length >= 16) {
             holder.time.visibility = View.VISIBLE
-            holder.time.text = item.lastMessageTime.substring(11, 16)
+
+            holder.time.text = formatChatTime(item.lastMessageTime)
         } else {
             holder.time.visibility = View.GONE
         }
@@ -114,7 +119,36 @@ class ChatRecyclerAdapter(
     }
 
     override fun getItemCount(): Int = chatItems.size
+    private fun formatChatTime(timestamp: String): String {
+        return try {
+            val utcFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+            utcFormat.timeZone = TimeZone.getTimeZone("UTC")
+            val date = utcFormat.parse(timestamp.substringBefore("."))
 
+            val now = Calendar.getInstance()
+            val msgTime = Calendar.getInstance().apply { time = date }
+
+            when {
+                // Сегодня → только время
+                now.get(Calendar.DAY_OF_YEAR) == msgTime.get(Calendar.DAY_OF_YEAR) &&
+                        now.get(Calendar.YEAR) == msgTime.get(Calendar.YEAR) ->
+                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
+
+                // Вчера → "Вчера"
+                now.get(Calendar.DAY_OF_YEAR) - msgTime.get(Calendar.DAY_OF_YEAR) == 1 &&
+                        now.get(Calendar.YEAR) == msgTime.get(Calendar.YEAR) -> "Вчера"
+
+                // Этот год → день и месяц
+                now.get(Calendar.YEAR) == msgTime.get(Calendar.YEAR) ->
+                    SimpleDateFormat("d MMM", Locale("ru")).format(date)
+
+                // Прошлый год → день, месяц, год
+                else -> SimpleDateFormat("dd.MM.yy", Locale.getDefault()).format(date)
+            }
+        } catch (e: Exception) {
+            if (timestamp.length >= 16) timestamp.substring(11, 16) else ""
+        }
+    }
     fun updateData(newItems: List<ChatItem>) {
         chatItems = newItems
         notifyDataSetChanged()
